@@ -1,0 +1,72 @@
+package alabast
+
+import munit.FunSuite
+import alabast.macros._
+import Context._
+
+class ExprSpec extends FunSuite:
+  testEquals("show[0]")(zero.show, "zero")
+
+  testEquals("+[00]")((zero + one).show, "one")
+  testEquals("+[10]")((int + zero).show, "int")
+  testEquals("+[20]")(((string + one) + int).show, "int + string + one")
+  testEquals("+[21]")(((int + one) + string).show, "int + string + one")
+  testEquals("+[30]")((int + (string + one)).show, "int + string + one")
+  testEquals("+[31]")((string + (int + one)).show, "int + string + one")
+  testEquals("+[40]")((string + int).show, "int + string")
+
+  testEquals("*[00]")((zero * one).show, "zero")
+  testEquals("*[10]")((one * zero).show, "zero")
+  testEquals("*[20]")((one * int).show, "int")
+  testEquals("*[30]")((int * one).show, "int")
+  testEquals("*[40]")(((int + one) * int).show, "int * int + int")
+  testEquals("*[50]")((int * (int + one)).show, "int * int + int")
+  testEquals("*[60]")(((int * string) * (string * string)).show, "int * string * string * string")
+  testEquals("*[61]")(((string * string) * (int * string)).show, "int * string * string * string")
+  testEquals("*[70]")(((int * string) * string).show, "int * string * string")
+  testEquals("*[71]")(((string * string) * int).show, "int * string * string")
+  testEquals("*[80]")((int * (string * string)).show, "int * string * string")
+  testEquals("*[81]")((string * (int * string)).show, "int * string * string")
+  testEquals("*[90]")((string * int).show, "int * string")
+
+  testEquals("subtract[00]")(one.expr.subtract(zero.expr).get.show, "one")
+  testEquals("subtract[10]")((int + string).expr.subtract((int + string).expr).get.show, "zero")
+  testEquals("subtract[11]")((int + string + string).expr.subtract((string + string).expr).get.show, "int")
+  testEquals("subtract[12]")((int + string + string + one).expr.subtract((string + one).expr).get.show, "int + string")
+  testEquals("subtract[13]")((string + one).expr.subtract((int + string).expr), None)
+  testEquals("subtract[20]")((int + string).expr.subtract(int.expr).get.show, "string")
+  testEquals("subtract[21]")((int + string).expr.subtract(string.expr).get.show, "int")
+  testEquals("subtract[22]")((int + string + one).expr.subtract(string.expr).get.show, "int + one")
+  testEquals("subtract[23]")((string + one).expr.subtract(int.expr), None)
+  testEquals("subtract[33]")(string.expr.subtract(string.expr).get.show, "zero")
+  testEquals("subtract[33]")(string.expr.subtract(int.expr), None)
+
+  // testEquals("factor[00]")(zero.expr.factor(int.expr).get.show, "zero")
+  // testEquals("factor[10]")(int.expr.factor(one.expr).get.show, "int")
+  // testEquals("factor[20]")((string + one).expr.factor((int + string).expr), None)
+  // testEquals("factor[21]")((int * string + one).expr.factor((int + one).expr), None)
+  // testEquals("factor[22]")((int * string + string + one).expr.factor((int + one).expr), None)
+  // testEquals("factor[23]")((int * string + string).expr.factor((int + one).expr).get.show, "string")
+  // testEquals("factor[24]")((int * string + int + string + one).expr.factor((int + one).expr).get.show, "string + one")
+
+  testEquals("asProduct[00]")(zero.asProduct(int).get.snd.show, "zero")
+  testEquals("asProduct[10]")(int.asProduct(one).get.snd.show, "int")
+  testEquals("asProduct[20]")((string + one).asProduct(int + string), None)
+  testEquals("asProduct[21]")((int * string + one).asProduct(int + one), None)
+  testEquals("asProduct[22]")((int * string + string + one).asProduct(int + one), None)
+  testEquals("asProduct[23]")((int * string + string).asProduct(int + one).get.snd.show, "string")
+  testEquals("asProduct[24]")((int * string + int + string + one).asProduct(int + one).get.snd.show, "string + one")
+  testEquals("asProduct[30]")((int + one).asProduct(string), None)
+  testEquals("asProduct[31]")((int + string).asProduct(int), None)
+  testEquals("asProduct[32]")((int + int).asProduct(int).get.snd.show, "one + one")
+  testEquals("asProduct[40]")(int.asProduct(int + one), None)
+  testEquals("asProduct[50]")((int * string).asProduct(int * int), None)
+  testEquals("asProduct[51]")((int * string).asProduct(int * string).get.snd.show, "one")
+  testEquals("asProduct[52]")((int * string).asProduct(string * string), None)
+  testEquals("asProduct[53]")((int * string * string).asProduct(string * string).get.snd.show, "int")
+  testEquals("asProduct[54]")((string * string).asProduct(int), None) 
+  testEquals("asProduct[60]")((int * string).asProduct(int).get.snd.show, "string")
+  testEquals("asProduct[61]")((int * int).asProduct(string), None)
+  testEquals("asProduct[62]")((int * string).asProduct(string).get.snd.show, "int")
+  testEquals("asProduct[70]")(int.asProduct(int * string), None)
+  
