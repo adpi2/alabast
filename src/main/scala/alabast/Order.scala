@@ -27,24 +27,3 @@ given Order[Int]:
     case c if c > 0 => Greater
     case 0 => Equal
     case _ => Lower
-
-given Order[Expr[?]]:
-  def compare(x: Expr[?], y: Expr[?]): Comparison = (x, y) match
-    case (Sum(xLeft, xRight), Sum(yLeft, yRight)) => 
-      compare(xLeft, yLeft).orElse(compare(xRight, yRight))
-    case (Sum(xLeft, _), y) => compare(xLeft, y).orElse(Greater)
-    case (x, Sum(yLeft, _)) => compare(x, yLeft).orElse(Lower)
-    case (Product(xFst, xSnd), Product(yFst, ySnd)) =>
-      compare(xFst, yFst).orElse(compare(xSnd, ySnd))
-    case (Product(xFst, _), y) => compare(xFst, y).orElse(Greater)
-    case (x, Product(yFst, _)) => compare(x, yFst).orElse(Lower)
-    case (Mu(_, x), Mu(_, y)) => compare(x, y)
-    case (Mu(_, _), _) => Greater
-    case (_, Mu(_, _)) => Lower
-    case (Predef(x), Predef(y)) => order[Int].compare(y.id, x.id)
-    case (Predef(_), _) => Greater
-    case (_, Predef(_)) => Lower
-    case (One, One) => Equal
-    case (One, Zero) => Greater
-    case (Zero, One) => Lower
-    case (Zero, Zero) => Equal

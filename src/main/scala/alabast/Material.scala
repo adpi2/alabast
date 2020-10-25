@@ -23,6 +23,10 @@ def mu[F[+_]](f: Material[Any, ?] => Context ?=> Material[F[Any], ?])(using ctx:
   muImpl[F]([X] => (x: Material[X, ?]) => (ctx: Context) ?=> f(x.asInstanceOf[Material[Any, ?]]).asInstanceOf[Material[F[X], ?]])
 
 object Material:
+  given Order[Material[?, ?]]:
+    def compare(x: Material[?, ?], y: Material[?, ?]) =
+      order[Expr[?]].compare(x.expr, y.expr)
+
   extension [X, R, Y] (x: Material[X, R])
     def show: String = x.expr.show
 
@@ -54,7 +58,7 @@ object Material:
           { (xx, yy) => (x.apply(xx), y.apply(yy)) }
           { (xx, yy) => (x.unapply(xx), y.unapply(yy)) }
     
-    def asProduct(y: Material[Y, ?]): Option[AsProduct[Y, ?, R]] = y match
+    def asProduct(y: Material[Y, ?]): Option[AsProduct[Y, ?, x.Raw]] = y match
       case Raw(y) => x.expr.asProduct(y)
       case Typed(expr, apply, unapply) =>
         for product <- x.expr.asProduct(expr)
@@ -65,6 +69,15 @@ object Material:
               { (y, x) => (unapply(y), x) },
             product.snd
           ) 
+  extension [X, R] (n: Int)
+    def * (x: Material[X, R]): Material[(Int, X), (Int, R)] = x match
+      case Raw(x) => Raw(Repeat(n, x))
+      case Typed(x, apply, unapply) =>
+        Typed(
+          Repeat(n, x),
+          (i, x) => (i, apply(x)),
+          (i, x) => (i, unapply(x))
+        )
 
 private def muImpl[F[+_]](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(using ctx: Context): Material[Fix[F], ?] =
   val fZero = f(zero)
