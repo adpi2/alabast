@@ -112,4 +112,3 @@ class ExprSpec extends FunSuite:
   testEquals("asProduct[91]")((int * int).asProduct(string), None)
   testEquals("asProduct[92]")((int * string).asProduct(string).get.snd.show, "int")
   testEquals("asProduct[A0]")(int.asProduct(int * string), None)
-  

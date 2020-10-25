@@ -2,17 +2,57 @@ package alabast
 
 import Comparison.{Greater, Lower, Equal}
 import compiletime.ops.int._
+import Auto._
 
 sealed trait Expr[T]:
   type R = T
+  val autos: Seq[Auto[T]]
 
-case object Zero extends Expr[Nothing]
-case object One extends Expr[Unit]
-final case class Predef[T](variable: Variable) extends Expr[T]
-final case class Product[A, B](fst: Expr[A], snd: Expr[B]) extends Expr[(A, B)]
-final case class Repeat[A](coeff: Int, expr: Expr[A]) extends Expr[(Int, A)]
-final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A, B]]
-final case class Mu[F](mu: Variable, unmu: Expr[F]) extends Expr[F]
+case object Zero extends Expr[Nothing]:
+  val autos = Seq()
+
+case object One extends Expr[Unit]:
+  val autos = Seq(identity)
+
+final case class Predef[T](variable: Variable) extends Expr[T]:
+  val autos = Seq(identity)
+
+final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A, B]]:
+  val autos = for
+    f <- left.autos
+    g <- right.autos
+  yield Iso.sum(f, g)
+
+final case class Repeat[A](n: Int, expr: Expr[A]) extends Expr[(Int, A)]:
+  val autos = {
+    val nAutos: Seq[Seq[Auto[A]]] = 
+      (0 until n)
+        .foldLeft(Seq(Seq.empty[Auto[A]])) {
+          (acc, _) =>
+            for
+              list <- acc
+              auto <- expr.autos
+            yield list :+ auto
+        }
+    
+    for
+      f <- permutations(n)
+      autos <- nAutos
+    yield Auto(
+      (i, x) => (f.apply(i), autos(i).apply(x)),
+      (i, x) => (f.unapply(i), autos(i).unapply(x))
+    )
+  }
+
+final case class Product[A, B](fst: Expr[A], snd: Expr[B]) extends Expr[(A, B)]:
+  val autos =
+    for
+      f <- fst.autos
+      g <- snd.autos
+    yield Iso.product(f, g)
+
+final case class Mu[R](mu: Variable, expr: Expr[R]) extends Expr[R]:
+  val autos: Seq[Auto[R]] = expr.autos.map(this.fold(_))
 
 object Expr:
   given Order[Expr[?]]:
@@ -59,10 +99,21 @@ object Expr:
       case Repeat(coeff, _) => coeff
       case _ => 1
 
+    def map(v: Variable, f: Iso[?, ?]): Iso[X, ?] = x match
+      case Zero => Auto.identity
+      case One => Auto.identity
+      case Predef(`v`) => f.asInstanceOf[Iso[X, ?]]
+      case Predef(_) => Auto.identity
+      case Sum(a, b) => Iso.sum(a.map(v, f), b.map(v, f))
+      case Repeat(_, x) => Iso.product(Auto.identity[Int], x.map(v, f))
+      case Product(a, b) => Iso.product(a.map(v, f), b.map(v, f))
+      case x@ Mu(_, unmu) => x.fold(unmu.map(v, f))
+
   extension [X, Y] (x: Expr[X])
+
     def + (y: Expr[Y]): Material[Either[X, Y], ?] = (x, y) match
-      case (Zero, y) => Typed(y, Right[X, Y], _ => absurd) // 00
-      case (x, Zero) => Typed(x, Left[X, Y], _ => absurd) // 10
+      case (Zero, y) => Typed(y, Iso(Right[X, Y], _.right.get)) // 00
+      case (x, Zero) => Typed(x, Iso(Left[X, Y], _ .left.get)) // 10
       case (Sum(xLeft, xRight), Sum(yLeft, yRight)) =>
         order.compare(xLeft.leader, yLeft.leader) match
           case Equal => // 20
@@ -121,7 +172,7 @@ object Expr:
               case Left(_) => absurd // should not be needed
             }
           case Lower => // 32
-            Typed(Sum(y, x), _.swap, _.swap)
+            Typed(Sum(y, x), Iso(_.swap, _.swap))
       case (_, Sum(left, right)) =>
         order.compare(x.leader, left.leader) match
           case Equal => // 40
@@ -153,13 +204,13 @@ object Expr:
               .split(x.coeff)
               .asInstanceOf[Material[Either[X, Y], ?]]
           case Greater => Raw(Sum(x, y)) // 51
-          case Lower => Typed(Sum(y, x), _.swap, _.swap) // 52
+          case Lower => Typed(Sum(y, x), Iso(_.swap, _.swap)) // 52
 
     def * (y: Expr[Y]): Material[(X, Y), ?] = (x, y) match
       case (Zero, _) => zero // 00
       case (_, Zero) => zero // 10
-      case (One, y) => Typed(y, ((), _), _(1)) // 20
-      case (x, One) => Typed(x, (_, ()), _(0)) // 30
+      case (One, y) => Typed(y, Iso(((), _), _(1))) // 20
+      case (x, One) => Typed(x, Iso((_, ()), _(0))) // 30
       case (Sum(left, right), y) => // 40
         (left * y + right * y).imap {
           case Left((x, y)) => (Left(x), y)
@@ -196,7 +247,7 @@ object Expr:
           product(fst, snd * y).imap
             { case (x1, (x2, y)) => ((x1, x2), y) }
             { case ((x1, x2), y) => (x1, (x2, y)) }
-        else Typed(Product(y, x),_.swap, _.swap) // A1
+        else Typed(Product(y, x), Iso(_.swap, _.swap)) // A1
       case (x, Product(fst, snd)) =>
         if x > fst then Raw(Product(x, y)) // B0
         else //B1
@@ -205,7 +256,7 @@ object Expr:
             { case (x, (y1, y2)) => (y1, (x, y2)) }
       case (x, y) => 
         if x >= y then Raw(Product(x, y))
-        else Typed(Product(y, x),_.swap, _.swap) // C0
+        else Typed(Product(y, x), Iso(_.swap, _.swap)) // C0
     
     def subtract(y: Expr[Y]): Option[Expr[?]] = (x, y) match
       case (x, Zero) => Some(x) // 00
@@ -282,7 +333,7 @@ object Expr:
       (x, y) match
         case (Zero, _) => Some(AsProduct(zero, Zero)) // 00
         case (_, One) => Some( // 10
-          AsProduct(Typed(x, (x => ((), x)), ((_, x) => x)), x)
+          AsProduct(Typed(x, Iso((x => ((), x)), ((_, x) => x))), x)
         )
         case (Sum(xLeft, xRight), Sum(yLeft, yRight)) =>
           xLeft.asProduct(yLeft).flatMap { leftLeftAsProduct => // 20
@@ -368,53 +419,70 @@ object Expr:
           Some(AsProduct(underlying, One))
         case _ => None
   
+  extension [X, Y] (x: Mu[X])
+    def fold(f: Iso[X, Y]): Iso[X, Y] =
+      val Mu(mu, unmu) = x
+      lazy val iso: Iso[X, Y] = f.andThen(Iso.lazily(fold))
+      lazy val fold: Iso[Y, Y] = unmu.map(mu, iso).asInstanceOf[Iso[Y, Y]] // those types are wrong but who cares!!
+      iso
+      
+  
   extension [X] (x: Repeat[X])
-    private def split(n: Int): Material[Either[?, ?], ?] = (n, x.coeff - n) match
-      case (1, 1) =>
-        Typed[Either[X, X], (Int, X)](
-          x,
-          (i, x) => if (i == 0) Left(x) else Right(x),
-          {
-            case Left(x) => (0, x)
-            case Right(x) => (1, x)
-          }
-        ).asInstanceOf[Material[Either[?, ?], ?]]
-      case (1, _) => 
-        Typed[Either[X, (Int, X)], (Int, X)](
-          x,
-          (i, x) => if (i == 0) Left(x) else Right((i - 1, x)),
-          {
-            case Left(x) => (0, x)
-            case Right((i, x)) => (i + 1, x)
-          }
-        ).asInstanceOf[Material[Either[?, ?], ?]]
-      case (_, 1) =>
-        Typed[Either[(Int, X), X], (Int, X)](
-          x,
-          (i, x) => if (i < n) Left((i, x)) else Right(x),
-          {
-            case Left((i, x)) => (i, x)
-            case Right(x) => (n, x)
-          }
-        ).asInstanceOf[Material[Either[?, ?], ?]]
-      case (_, _) =>
-        Typed[Either[(Int, X), (Int, X)], (Int, X)](
-          x,
-          (i, x) => if (i < n) Left((i, x)) else Right((i - n, x)),
-          {
-            case Left((i, x)) => (i, x)
-            case Right((i, x)) => (i + n, x)
-          }
-        ).asInstanceOf[Material[Either[?, ?], ?]]
+    private def split(n: Int): Material[Either[?, ?], ?] = 
+      (n, x.coeff - n) match
+        case (1, 1) =>
+          Typed[Either[X, X], (Int, X)](
+            x,
+            Iso(
+              (i, x) => if (i == 0) Left(x) else Right(x), 
+              {
+                case Left(x) => (0, x)
+                case Right(x) => (1, x)
+              }
+            )
+          ).asInstanceOf[Material[Either[?, ?], ?]]
+        case (1, _) => 
+          Typed[Either[X, (Int, X)], (Int, X)](
+            x,
+            Iso(
+              (i, x) => if (i == 0) Left(x) else Right((i - 1, x)),
+              {
+                case Left(x) => (0, x)
+                case Right((i, x)) => (i + 1, x)
+              }
+            )
+          ).asInstanceOf[Material[Either[?, ?], ?]]
+        case (_, 1) =>
+          Typed[Either[(Int, X), X], (Int, X)](
+            x,
+            Iso(
+              (i, x) => if (i < n) Left((i, x)) else Right(x),
+              {
+                case Left((i, x)) => (i, x)
+                case Right(x) => (n, x)
+              }
+            )
+          ).asInstanceOf[Material[Either[?, ?], ?]]
+        case (_, _) =>
+          Typed[Either[(Int, X), (Int, X)], (Int, X)](
+            x,
+            Iso(
+              (i, x) => if (i < n) Left((i, x)) else Right((i - n, x)),
+              {
+                case Left((i, x)) => (i, x)
+                case Right((i, x)) => (i + n, x)
+              }
+            )
+          ).asInstanceOf[Material[Either[?, ?], ?]]
 
   private def sum[X, Y](x: Expr[X], y: Material[Y, ?]): Material[Either[X, Y], ?] = y match
     case Raw(y) => Raw(Sum(x, y))
-    case Typed(expr, apply, unapply) => Typed(Sum(x, expr), _.map(apply), _.map(unapply))
+    case Typed(expr, cons) => Typed(Sum(x, expr), Iso(_.map(cons.apply), _.map(cons.unapply)))
 
   private def product[X, Y](x: Expr[X], y: Material[Y, ?]): Material[(X, Y), ?] = y match
     case Raw(y) => Raw(Product(x, y))
-    case Typed(expr, apply, unapply) =>  
-      Typed(Product(x, expr), (x, y) => (x, apply(y)), (x, y) => (x, unapply(y)))
+    case Typed(expr, cons) =>  
+      Typed(Product(x, expr), Iso((x, y) => (x, cons.apply(y)), (x, y) => (x, cons.unapply(y))))
 
   private def productAsProduct[X, Y, Z](fst: Expr[?], asProduct: AsProduct[Y, Z, ?]): AsProduct[Y, ?, X] =
     asProduct.snd match
