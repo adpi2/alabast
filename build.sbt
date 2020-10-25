@@ -1,5 +1,3 @@
-val dottyVersion = "0.27.0-RC1"
-
 Global / semanticdbEnabled := true
 
 lazy val root = project
@@ -7,7 +5,7 @@ lazy val root = project
   .settings(
     name := "alabast",
     version := "0.1.0",
-    scalaVersion := dottyVersion,
+    scalaVersion := "0.27.0-RC1",
     libraryDependencies ++= Seq(
       "org.scalameta" %% "munit" % "0.7.14" % Test
     ),
