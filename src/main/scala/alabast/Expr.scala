@@ -6,16 +6,16 @@ import Auto._
 
 sealed trait Expr[T]:
   type R = T
-  val autos: Seq[Auto[T]]
+  val autos: LazyList[Auto[T]]
 
 case object Zero extends Expr[Nothing]:
-  val autos = Seq()
+  val autos = LazyList()
 
 case object One extends Expr[Unit]:
-  val autos = Seq(identity)
+  val autos = LazyList(identity)
 
 final case class Predef[T](variable: Variable) extends Expr[T]:
-  val autos = Seq(identity)
+  val autos = LazyList(identity)
 
 final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A, B]]:
   val autos = for
@@ -25,22 +25,23 @@ final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A,
 
 final case class Repeat[A](n: Int, expr: Expr[A]) extends Expr[(Int, A)]:
   val autos = {
-    val nAutos: Seq[Seq[Auto[A]]] = 
-      (0 until n)
-        .foldLeft(Seq(Seq.empty[Auto[A]])) {
-          (acc, _) =>
-            for
-              list <- acc
-              auto <- expr.autos
-            yield list :+ auto
-        }
+    // val nAutos: Seq[Array[Auto[A]]] = 
+    //   (0 until n)
+    //     .foldLeft(Seq(List.empty[Auto[A]])) {
+    //       (acc, _) =>
+    //         for
+    //           list <- acc
+    //           auto <- expr.autos
+    //         yield auto :: list
+    //     }
+    //     .map(_.toArray)
     
     for
       f <- permutations(n)
-      autos <- nAutos
-    yield Auto(
-      (i, x) => (f.apply(i), autos(i).apply(x)),
-      (i, x) => (f.unapply(i), autos(i).unapply(x))
+      auto <- expr.autos
+    yield Auto[(Int, A)](
+      (i, x) => (f.apply(i), auto.apply(x)),
+      (i, x) => (f.unapply(i), auto.unapply(x))
     )
   }
 
@@ -52,7 +53,7 @@ final case class Product[A, B](fst: Expr[A], snd: Expr[B]) extends Expr[(A, B)]:
     yield Iso.product(f, g)
 
 final case class Mu[R](mu: Variable, expr: Expr[R]) extends Expr[R]:
-  val autos: Seq[Auto[R]] = expr.autos.map(this.fold(_))
+  val autos: LazyList[Auto[R]] = expr.autos.map(this.fold(_))
 
 object Expr:
   given Order[Expr[?]]:
@@ -78,36 +79,6 @@ object Expr:
       case (One, Zero) => Greater
       case (Zero, One) => Lower
       case (Zero, Zero) => Equal
-   
-  extension [X] (x: Expr[X])
-    def show: String = x match
-      case Zero => "zero" // 0
-      case One => "one"
-      case Predef(v) => v.name
-      case Sum(left, right) => s"${left.show} + ${right.show}"
-      case Repeat(n, expr) => s"$n * ${expr.show}"
-      case Product(fst, snd) => s"${fst.show} * ${snd.show}"
-      case Mu(mu, unmu) => s"mu(${mu.name} => ${unmu.show})"
-
-    def leader: Expr[?] = x match
-      case Sum(left, _) => left.leader
-      case Repeat(_, x) => x
-      case _ => x
-    
-    def coeff: Int = x match
-      case Sum(x, _) => x.coeff
-      case Repeat(coeff, _) => coeff
-      case _ => 1
-
-    def map(v: Variable, f: Iso[?, ?]): Iso[X, ?] = x match
-      case Zero => Auto.identity
-      case One => Auto.identity
-      case Predef(`v`) => f.asInstanceOf[Iso[X, ?]]
-      case Predef(_) => Auto.identity
-      case Sum(a, b) => Iso.sum(a.map(v, f), b.map(v, f))
-      case Repeat(_, x) => Iso.product(Auto.identity[Int], x.map(v, f))
-      case Product(a, b) => Iso.product(a.map(v, f), b.map(v, f))
-      case x@ Mu(_, unmu) => x.fold(unmu.map(v, f))
 
   extension [X, Y] (x: Expr[X])
 
@@ -418,14 +389,101 @@ object Expr:
           val underlying = Raw(x).imap { (_, ()) } { _(0) } 
           Some(AsProduct(underlying, One))
         case _ => None
-  
-  extension [X, Y] (x: Mu[X])
-    def fold(f: Iso[X, Y]): Iso[X, Y] =
+
+  def repeat[X](coeff: Int, x: Expr[X]): Material[(Int, X), ?] = x match
+    case Sum(left, right) =>
+      (repeat(coeff, left) + repeat(coeff, right)).imap {
+        case Left((i, x)) => (i, Left(x))
+        case Right((i, x)) => (i, Right(x))
+      } {
+        (i, x) => x.left.map((i, _)).map((i, _))
+      }
+    case Repeat(n, x) => 
+      Typed(
+        Repeat(coeff * n, x),
+        Iso(
+          (i, x) => (i / n, (i % n, x)),
+          { case (i, (j, x)) => (i * n + j, x) }
+        )
+      )
+    case _ => Raw(Repeat(coeff, x))
+
+
+    extension [X] (x: Expr[X])
+    def show: String = x match
+      case Zero => "zero" // 0
+      case One => "one"
+      case Predef(v) => v.name
+      case Sum(left, right) => s"${left.show} + ${right.show}"
+      case Repeat(n, expr) => s"$n * ${expr.show}"
+      case Product(fst, snd) => s"${fst.show} * ${snd.show}"
+      case Mu(mu, unmu) => s"mu(${mu.name} => ${unmu.show})"
+
+    def leader: Expr[?] = x match
+      case Sum(left, _) => left.leader
+      case Repeat(_, x) => x
+      case _ => x
+    
+    def coeff: Int = x match
+      case Sum(x, _) => x.coeff
+      case Repeat(coeff, _) => coeff
+      case _ => 1
+
+    def autoMap(v: Variable, f: Iso[?, ?]): Auto[X] = x match
+      case Zero => Auto.identity
+      case One => Auto.identity
+      case Predef(`v`) => f.asInstanceOf[Auto[X]]
+      case Predef(_) => Auto.identity
+      case Sum(left, right) => Iso.sum(left.autoMap(v, f), right.autoMap(v, f))
+      case Repeat(_, x) => Iso.product(Auto.identity[Int], x.autoMap(v, f))
+      case Product(fst, snd) => Iso.product(fst.autoMap(v, f), snd.autoMap(v, f))
+      case x@ Mu(_, expr) => x.fold(expr.autoMap(v, f))
+    
+    def contains(v: Variable): Boolean = x match
+      case Zero => false
+      case One => false
+      case Predef(`v`) => true
+      case Predef(_) => false
+      case Sum(left, right) => left.contains(v) || right.contains(v)
+      case Repeat(_, x) => x.contains(v)
+      case Product(fst, snd) => fst.contains(v) || snd.contains(v)
+      case Mu(_, _) => false // MAYBE expr.contains(v)...
+
+    def map(mapping: Map[Variable, Variable])(using Context): Material[X, ?] = x match
+      case Zero => Raw(Zero)
+      case One => Raw(One)
+      case Predef(x) if mapping.contains(x) => Raw(Predef(mapping(x)))
+      case Predef(_) => Raw(x)
+      case Sum(left, right) => left.map(mapping) + right.map(mapping)
+      case Repeat(n, x) => n * x.map(mapping)
+      case Product(fst, snd) => fst.map(mapping) * snd.map(mapping)
+      case Mu(x, expr) if mapping.contains(x) => Raw(Predef(mapping(x)))
+      case Mu(x, expr) => Context.in(y => mu(y, expr.map(mapping + (x -> y))))
+
+  extension [X] (x: Mu[X])
+    def fold(f: Auto[X]): Auto[X] =
       val Mu(mu, unmu) = x
-      lazy val iso: Iso[X, Y] = f.andThen(Iso.lazily(fold))
-      lazy val fold: Iso[Y, Y] = unmu.map(mu, iso).asInstanceOf[Iso[Y, Y]] // those types are wrong but who cares!!
+      lazy val iso: Auto[X] = f.andThen(Iso.lazily(fold))
+      lazy val fold: Auto[X] = unmu.autoMap(mu, iso)
       iso
-      
+
+    def unmu(using Context): Material[X, ?] =
+      val Mu(x0, unmu) = x
+      def unwrap[Y](y: Expr[Y], mapping: Map[Variable, Variable])(using Context): Material[Y, ?] = y match
+        case Zero => Raw(Zero)
+        case One => Raw(One)
+        case Predef(`x0`) => 
+          Context.in { x1 =>
+            mu(x1, unmu.map(mapping + (x0 -> x1)).asInstanceOf[Material[Y, ?]])
+          }
+        case Predef(x1) if mapping.contains(x1) => Raw(Predef(mapping(x1)))
+        case Predef(_) => Raw(y)
+        case Sum(left, right) => unwrap(left, mapping) + unwrap(right, mapping)
+        case Repeat(n, y) => n * unwrap(y, mapping)
+        case Product(fst, snd) => unwrap(fst, mapping) * unwrap(snd, mapping)
+        case Mu(x1, expr) =>
+          Context.in(x2 => mu(x2, unwrap(expr, mapping + (x1 -> x2))))
+      unwrap(unmu, Map())
   
   extension [X] (x: Repeat[X])
     private def split(n: Int): Material[Either[?, ?], ?] = 

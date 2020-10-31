@@ -1,30 +1,35 @@
 package alabast
 
 import Comparison._
+import Expr._
 
 sealed trait Material[T, R]:
   type Raw = R
   val expr: Expr[R]
   val cons: Iso[R, T]
-  val isos: Seq[Iso[R, T]]
-  val autos: Seq[Auto[T]]
+  val isos: LazyList[Iso[R, T]]
+  val autos: LazyList[Auto[T]]
   // unsafe cast R to U
   def withRaw[U]: Material[T, U] = asInstanceOf[Material[T, U]]
 
 final case class Raw[T](expr: Expr[T]) extends Material[T, T]:
   override val cons: Auto[T] = Auto.identity
-  override val autos: Seq[Auto[T]] = expr.autos
-  override val isos: Seq[Auto[T]] = autos
+  override val autos: LazyList[Auto[T]] = expr.autos
+  override val isos: LazyList[Auto[T]] = autos
 
 final case class Typed[T, R](val expr: Expr[R], val cons: Iso[R, T]) extends Material[T, R]:
-  override val isos: Seq[Iso[R, T]] = expr.autos.map(_.andThen(cons))
-  override val autos: Seq[Auto[T]] = expr.autos.map(cons.invert.andThen(_).andThen(cons))
+  override val isos: LazyList[Iso[R, T]] = expr.autos.map(_.andThen(cons))
+  override val autos: LazyList[Auto[T]] = expr.autos.map(cons.invert.andThen(_).andThen(cons))
 
 def zero[T]: Material[T, Nothing] = Typed(Zero, Iso.absurd)
 def one: Material[Unit, Unit] = Raw(One)
 def predef[T](name: String)(using ctx: Context): Material[T, T] = Raw(Predef[T](ctx.variables(name)))
-def mu[F[+_], T](f: Material[Any, ?] => Context ?=> Material[F[Any], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
+def mu[F[_], T](f: Material[Any, ?] => Context ?=> Material[F[Any], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
   muImpl[F, T]([X] => (x: Material[X, ?]) => (ctx: Context) ?=> f(x.asInstanceOf[Material[Any, ?]]).asInstanceOf[Material[F[X], ?]])(fix)
+
+def mu[T, R](v: Variable, mat: Material[T, R]): Material[T, R] = mat match
+  case Raw(expr) => Raw(Mu(v, expr))
+  case Typed(expr, cons) => Typed(Mu(v, expr), cons)
 
 object Material:
   given Order[Material[?, ?]]:
@@ -65,7 +70,7 @@ object Material:
           { (x, y) => (xCons.apply(x), yCons.apply(y)) }
           { (x, y) => (xCons.unapply(x), yCons.unapply(y)) }
     
-    def asProduct(y: Material[Y, ?]): Option[AsProduct[Y, ?, x.Raw]] = y match
+    def asProduct(y: Material[Y, ?]): Option[AsProduct[Y, ?, R]] = y match
       case Raw(y) => x.expr.asProduct(y)
       case Typed(expr, cons) =>
         for product <- x.expr.asProduct(expr)
@@ -82,54 +87,77 @@ object Material:
         val cons = y.withRaw[R].cons
         x.isos.map(f => f.invert.andThen(cons))
       else Seq.empty
-      
+  
+  extension [X, R] (x: Material[X, R])
+    def unmu(using Context): Material[X, ?] = x match
+      case Raw(x @ Mu(_, _)) => x.unmu
+      case Typed(x @ Mu(_, _), cons) => x.unmu.imap(cons) 
+      case _ => throw new Exception(s"cannot unmu material of expr ${x.show}")
     
   extension [X, R] (n: Int)
-    def * (x: Material[X, R]): Material[(Int, X), (Int, R)] = x match
-      case Raw(x) => Raw(Repeat(n, x))
-      case Typed(x, cons) => Typed(
-        Repeat(n, x),
-        Iso((i, x) => (i, cons.apply(x)), (i, x) => (i, cons.unapply(x)))
-      )
+    def * (x: Material[X, R]): Material[(Int, X), ?] = x match
+      case Raw(x) => repeat(n, x)
+      case Typed(x, cons) => repeat(n, x).imap((i, x) => (i, cons.apply(x)))((i, x) => (i, cons.unapply(x)))
 
-private def muImpl[F[+_], T](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
+
+private def muImpl[F[_], T](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
   val fZero = f(zero)
   val fOne = f(one).expr
   fZero.expr match
     case Zero => zero // 00
     case `fOne` => fZero.imap(fix.asInstanceOf[Iso[F[Nothing], T]]) // 10
     case One => // 20
-      val (mu, next) = ctx.next
-      lazy val recurse: Material[T, ?] = Typed(Predef[unmu.Raw](mu),Iso.lazily(unmu.cons))
-      lazy val unmu: Material[T, ?] = f(recurse)(using next).imap(fix)
-      Typed(Mu(mu, unmu.expr), unmu.cons)
+      Context.in { mu => 
+        lazy val recurse: Material[T, ?] = Typed(Predef[unmu.Raw](mu),Iso.lazily(unmu.cons))
+        lazy val unmu: Material[T, ?] = f(recurse).imap(fix)
+        Typed(Mu(mu, unmu.expr), unmu.cons)
+      }
     
     case _ => // 30
-      val (variable, next) = ctx.next
-      
-      val fZeroIn = f(zero)(using next)
-      type RawMu = fRecAsProduct.Snd
+      Context.in { variable => 
+        val fZeroIn = f(zero)
+        type RawMu = fRecAsProduct.Snd
 
-      val mu = Raw(Predef[RawMu](variable))
-      val fZeroMu = fZeroIn * mu
+        def prepare[X](x: Expr[X])(using Context): Material[X, ?] = x match
+          case Zero => Raw(Zero)
+          case One => Raw(One)
+          case Predef(_) => Raw(x)
+          case Sum(left, right) => prepare(left) + prepare(right)
+          case x @ Product(fst, snd) =>
+            if x.asProduct(Predef(variable)).isDefined 
+            then Raw(x)
+            else prepare(fst) * prepare(snd)
+          case Repeat(n, x) => n * prepare(x)
+          case x @ Mu(_, expr) =>
+            if expr.contains(variable)
+            then x.unmu
+            else Raw(x)
+
+        val mu = Raw(Predef[RawMu](variable))
+        val fZeroMu = fZeroIn * mu
+        
+        lazy val fRec: Material[F[T], ?] = f(recurse) match
+          case Raw(x) => prepare(x)
+          case Typed(x, cons) => prepare(x).imap(cons)
+        lazy val fRecAsProduct: AsProduct[F[Nothing], ?, fRec.Raw] =
+          fRec.asProduct(fZeroIn).get
+            .asInstanceOf[AsProduct[F[Nothing], ?, fRec.Raw]] // should not be needed :(
+        lazy val recurse: Material[T, ?] = Typed(
+          fZeroMu.expr,
+          fZeroMu.cons
+            .andThen(Iso.lazily(fRecAsProduct.cons.invert))
+            .andThen(Iso.lazily(fRec.cons))
+            .andThen(fix)
+        )
+        val muExpr = Raw(Mu(variable, fRecAsProduct.snd))
+        val result = fZero * muExpr
+        Typed(
+          result.expr,
+          result.cons
+            .andThen(fRecAsProduct.cons.invert)
+            .andThen(fRec.cons)
+            .andThen(fix)
+        )
+      }
       
-      lazy val fRec: Material[F[T], ?] = f(recurse)(using next)
-      lazy val fRecAsProduct: AsProduct[F[Nothing], ?, fRec.Raw] =
-        fRec.asProduct(fZeroIn).get
-          .asInstanceOf[AsProduct[F[Nothing], ?, fRec.Raw]] // should not be needed :(
-      lazy val recurse: Material[T, ?] = Typed(
-        fZeroMu.expr,
-        fZeroMu.cons
-          .andThen(Iso.lazily(fRecAsProduct.cons.invert))
-          .andThen(Iso.lazily(fRec.cons))
-          .andThen(fix)
-      )
-      val muExpr = Raw(Mu(variable, fRecAsProduct.snd))
-      val result = fZero * muExpr
-      Typed(
-        result.expr,
-        result.cons
-          .andThen(fRecAsProduct.cons.invert)
-          .andThen(fRec.cons)
-          .andThen(fix)
-      )
+      

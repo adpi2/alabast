@@ -16,5 +16,9 @@ object Context:
 
   given Context = Context("int", "string")
 
+  def in[T](f: Variable => Context ?=> T)(using ctx: Context): T = 
+    val (x, next) = ctx.next
+    f(x)(using next)
+
   val int: Material[Int, Int] = predef[Int]("int")
   val string: Material[String, String] = predef[String]("string")
