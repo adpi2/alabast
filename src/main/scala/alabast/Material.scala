@@ -100,64 +100,53 @@ object Material:
       case Typed(x, cons) => repeat(n, x).imap((i, x) => (i, cons.apply(x)))((i, x) => (i, cons.unapply(x)))
 
 
-private def muImpl[F[_], T](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
-  val fZero = f(zero)
+private def muImpl[F[_], X](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(fix: Iso[F[X], X])(using ctx: Context): Material[X, ?] =
+  val fZero = f(zero[X])
   val fOne = f(one).expr
   fZero.expr match
     case Zero => zero // 00
-    case `fOne` => fZero.imap(fix.asInstanceOf[Iso[F[Nothing], T]]) // 10
+    case `fOne` => fZero.imap(fix) // 10
     case One => // 20
-      Context.in { mu => 
-        lazy val recurse: Material[T, ?] = Typed(Predef[unmu.Raw](mu),Iso.lazily(unmu.cons))
-        lazy val unmu: Material[T, ?] = f(recurse).imap(fix)
-        Typed(Mu(mu, unmu.expr), unmu.cons)
+      Context.in { x => 
+        lazy val recurse: Material[X, ?] = Typed(Predef[unmu.Raw](x),Iso.lazily(unmu.cons))
+        lazy val unmu: Material[X, ?] = f(recurse).imap(fix)
+        Typed(Mu(x, unmu.expr), unmu.cons)
       }
     
     case _ => // 30
-      Context.in { variable => 
-        val fZeroIn = f(zero)
-        type RawMu = fRecAsProduct.Snd
+      Context.in { x =>
+        val fZeroIn = f(zero[X])
+        lazy val recurse: Material[X, ?] = Typed(Predef[unmu.Raw](x),Iso.lazily(unmu.cons))
+        lazy val unmu: Material[X, ?] = f(recurse).imap(fix)
 
-        def prepare[X](x: Expr[X])(using Context): Material[X, ?] = x match
-          case Zero => Raw(Zero)
-          case One => Raw(One)
-          case Predef(_) => Raw(x)
-          case Sum(left, right) => prepare(left) + prepare(right)
-          case x @ Product(fst, snd) =>
-            if x.asProduct(Predef(variable)).isDefined 
-            then Raw(x)
-            else prepare(fst) * prepare(snd)
-          case Repeat(n, x) => n * prepare(x)
-          case x @ Mu(_, expr) =>
-            if expr.contains(variable)
-            then x.unmu
-            else Raw(x)
+        unmu.expr.subtract(fZeroIn.expr).flatMap(_.asProduct(Predef(x))) match
+          case None => Typed(Mu(x, unmu.expr), unmu.cons)
+          case Some(_) =>
+            val mu = Raw(Predef[fRecAsProduct.Snd](x))
+            val fZeroMu = fZeroIn * mu
+            
+            lazy val fRec: Material[F[X], ?] = f(recurse)
+            lazy val fRecAsProduct: AsProduct[F[X], ?, fRec.Raw] =
+              fRec.asProduct(fZeroIn).get
+                .asInstanceOf[AsProduct[F[X], ?, fRec.Raw]] // should not be needed :(
+            lazy val recurse: Material[X, ?] = Typed(
+              fZeroMu.expr,
+              fZeroMu.cons
+                .andThen(Iso.lazily(fRecAsProduct.cons.invert))
+                .andThen(Iso.lazily(fRec.cons))
+                .andThen(fix)
+            )
+            val muExpr = Raw(Mu(x, fRecAsProduct.snd))
+            val result = fZero * muExpr
+            Typed(
+              result.expr,
+              result.cons
+                .andThen(fRecAsProduct.cons.invert)
+                .andThen(fRec.cons)
+                .andThen(fix)
+            )
+        }
 
-        val mu = Raw(Predef[RawMu](variable))
-        val fZeroMu = fZeroIn * mu
         
-        lazy val fRec: Material[F[T], ?] = f(recurse) match
-          case Raw(x) => prepare(x)
-          case Typed(x, cons) => prepare(x).imap(cons)
-        lazy val fRecAsProduct: AsProduct[F[Nothing], ?, fRec.Raw] =
-          fRec.asProduct(fZeroIn).get
-            .asInstanceOf[AsProduct[F[Nothing], ?, fRec.Raw]] // should not be needed :(
-        lazy val recurse: Material[T, ?] = Typed(
-          fZeroMu.expr,
-          fZeroMu.cons
-            .andThen(Iso.lazily(fRecAsProduct.cons.invert))
-            .andThen(Iso.lazily(fRec.cons))
-            .andThen(fix)
-        )
-        val muExpr = Raw(Mu(variable, fRecAsProduct.snd))
-        val result = fZero * muExpr
-        Typed(
-          result.expr,
-          result.cons
-            .andThen(fRecAsProduct.cons.invert)
-            .andThen(fRec.cons)
-            .andThen(fix)
-        )
-      }
       
       

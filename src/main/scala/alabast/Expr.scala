@@ -438,16 +438,6 @@ object Expr:
       case Repeat(_, x) => Iso.product(Auto.identity[Int], x.autoMap(v, f))
       case Product(fst, snd) => Iso.product(fst.autoMap(v, f), snd.autoMap(v, f))
       case x@ Mu(_, expr) => x.fold(expr.autoMap(v, f))
-    
-    def contains(v: Variable): Boolean = x match
-      case Zero => false
-      case One => false
-      case Predef(`v`) => true
-      case Predef(_) => false
-      case Sum(left, right) => left.contains(v) || right.contains(v)
-      case Repeat(_, x) => x.contains(v)
-      case Product(fst, snd) => fst.contains(v) || snd.contains(v)
-      case Mu(_, _) => false // MAYBE expr.contains(v)...
 
     def map(mapping: Map[Variable, Variable])(using Context): Material[X, ?] = x match
       case Zero => Raw(Zero)

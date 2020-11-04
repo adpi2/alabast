@@ -55,19 +55,8 @@ class MaterialSpec extends FunSuite:
   testEquals("mu[30]")((int * list(int)).expr, consList(int).expr)
 
   type C[X] = Either[Unit, List[X]]
-  testEquals("mu[30]")(mu[C, Fix[C]](x => one + list(x))(Iso.fix).show, "2 * mu(x0 => mu(x1 => 2 * x0 * x1 + one) * x0 + one)")
-  testEquals("mu[30]")(mu[C, Fix[C]](x => one + list(x))(Iso.fix).autos.size, 4)
-  
-  type D[X] = [Y] =>> C[(X, Y)]
-  type E[X] = Either[Unit, Fix[D[X]]]
-  testEquals("mu[30]")(
-    mu[E, Fix[E]](x => one + mu[D[Any], Fix[D[Any]]](y => one + list(x * y))(Iso.fix))(Iso.fix).show,
-    "3 * mu(x0 => 2 * mu(x1 => 3 * mu(x2 => 6 * x0 * x1 * x2 + one) * x0 * x1 + one) * mu(x1 => 6 * mu(x2 => 3 * x0 * x1 * x2 + one) * x0 * x1 + one) * x0 + one)"
-  )
-  // testEquals("mu[30]")(
-  //   mu[E, Fix[E]](x => one + mu[D[Any], Fix[D[Any]]](y => one + list(x * y))(Iso.fix))(Iso.fix).autos.size,
-  //   223948800
-  // )
+  testEquals("mu[30]")(mu[C, Fix[C]](x => one + list(x))(Iso.fix).show, "mu(x0 => mu(x1 => x0 * x1 + one) + one)")
+  testEquals("mu[30]")(mu[C, Fix[C]](x => one + list(x))(Iso.fix).autos.size, 1)
 
   testEquals("Mu.autos")(list(one + one).autos.size, 2)
   testEquals("Mu.autos")(
@@ -82,7 +71,6 @@ class MaterialSpec extends FunSuite:
   def aUnit = Fix[A](Left(()))
   def aLeft(a: Fix[A]): Fix[A] = Fix(Right(Left(a)))
   def aRight(a: Fix[A]): Fix[A] = Fix[A](Right(Right(a)))
-
   testEquals("Mu.autos")(mu[A, Fix[A]](x => one + (x + x))(Iso.fix).autos.size, 2)
   testEquals("Mu.autos")(
     mu[A, Fix[A]](x => one + (x + x))(Iso.fix).autos.map(_.apply(aRight(aLeft(aUnit)))),
