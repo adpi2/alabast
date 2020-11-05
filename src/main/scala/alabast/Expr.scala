@@ -24,26 +24,23 @@ final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A,
   yield Iso.sum(f, g)
 
 final case class Repeat[A](n: Int, expr: Expr[A]) extends Expr[(Int, A)]:
-  val autos = {
-    // val nAutos: Seq[Array[Auto[A]]] = 
-    //   (0 until n)
-    //     .foldLeft(Seq(List.empty[Auto[A]])) {
-    //       (acc, _) =>
-    //         for
-    //           list <- acc
-    //           auto <- expr.autos
-    //         yield auto :: list
-    //     }
-    //     .map(_.toArray)
-    
+  private val tuples: LazyList[List[Auto[A]]] =
+    Iterator.iterate(LazyList(List.empty[Auto[A]])) { acc =>
+      for 
+        list <- acc
+        auto <- expr.autos
+      yield auto :: list 
+    }
+    .drop(n).next
+
+  val autos =
     for
       f <- permutations(n)
-      auto <- expr.autos
+      tuple <- tuples
     yield Auto[(Int, A)](
-      (i, x) => (f.apply(i), auto.apply(x)),
-      (i, x) => (f.unapply(i), auto.unapply(x))
+      (i, x) => (f.apply(i), tuple(i).apply(x)),
+      (i, x) => (f.unapply(i), tuple(i).unapply(x))
     )
-  }
 
 final case class Product[A, B](fst: Expr[A], snd: Expr[B]) extends Expr[(A, B)]:
   val autos =
