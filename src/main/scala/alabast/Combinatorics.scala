@@ -21,3 +21,13 @@ private val perms: LazyList[Array[Auto[Int]]] =
   }.map(_(1))
 
 def permutations(n: Int): LazyList[Auto[Int]] = LazyList.from(perms(n - 1))
+
+extension [A] (seq: Seq[A]):
+  def tuples(n: Int): LazyList[List[A]] =
+    Iterator.iterate(LazyList(List.empty[A])) { acc =>
+      for 
+        list <- acc
+        a <- seq
+      yield a :: list 
+    }
+    .drop(n).next // not really lazy

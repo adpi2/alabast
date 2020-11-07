@@ -24,16 +24,8 @@ final case class Sum[A, B](left: Expr[A], right: Expr[B]) extends Expr[Either[A,
   yield Iso.sum(f, g)
 
 final case class Repeat[A](n: Int, expr: Expr[A]) extends Expr[(Int, A)]:
-  private val tuples: LazyList[List[Auto[A]]] =
-    Iterator.iterate(LazyList(List.empty[Auto[A]])) { acc =>
-      for 
-        list <- acc
-        auto <- expr.autos
-      yield auto :: list 
-    }
-    .drop(n).next
-
   val autos =
+    val tuples = expr.autos.tuples(n)
     for
       f <- permutations(n)
       tuple <- tuples
@@ -49,6 +41,17 @@ final case class Product[A, B](fst: Expr[A], snd: Expr[B]) extends Expr[(A, B)]:
       g <- snd.autos
     yield Iso.product(f, g)
 
+final case class Power[A](n: Int, expr: Expr[A]) extends Expr[List[A]]:
+  val autos =
+    val tuples = expr.autos.tuples(n)
+    for
+      f <- permutations(n)
+      tuple <- tuples
+    yield Auto[List[A]](
+      x => x.zip(tuple).map((x, f) => f.apply(x)),
+      x => x.zip(tuple).map((x, f) => f.unapply(x))
+    )
+
 final case class Mu[R](mu: Variable, expr: Expr[R]) extends Expr[R]:
   val autos: LazyList[Auto[R]] = expr.autos.map(this.fold(_))
 
@@ -56,16 +59,39 @@ object Expr:
   given Order[Expr[?]]:
     def compare(x: Expr[?], y: Expr[?]): Comparison = (x, y) match
       case (Sum(xLeft, xRight), Sum(yLeft, yRight)) => 
-        compare(xLeft, yLeft).orElse(compare(xRight, yRight))
-      case (Sum(xLeft, _), y) => compare(xLeft, y).orElse(Greater)
-      case (x, Sum(yLeft, _)) => compare(x, yLeft).orElse(Lower)
-      case (Repeat(m, x), Repeat(n, y)) => compare(x, y).orElse(order[Int].compare(m, n))
-      case (Repeat(_, x), y) => compare(x, y).orElse(Greater)
-      case (x, Repeat(_, y)) => compare(x, y).orElse(Lower)
+        compare(xLeft, yLeft) // 00
+          .orElse(compare(xRight, yRight)) // 01
+      case (Sum(xLeft, _), y) =>
+        compare(xLeft, y) // 10
+          .orElse(Greater) // 11
+      case (x, Sum(yLeft, _)) =>
+        compare(x, yLeft) // 20
+          .orElse(Lower) // 21
+      case (Repeat(m, x), Repeat(n, y)) =>
+        compare(x, y) // 30
+          .orElse(order[Int].compare(m, n)) // 31
+      case (Repeat(_, x), y) =>
+        compare(x, y) // 40
+          .orElse(Greater) // 41
+      case (x, Repeat(_, y)) =>
+        compare(x, y) // 50
+          .orElse(Lower) // 51
       case (Product(xFst, xSnd), Product(yFst, ySnd)) =>
-        compare(xFst, yFst).orElse(compare(xSnd, ySnd))
-      case (Product(xFst, _), y) => compare(xFst, y).orElse(Greater)
-      case (x, Product(yFst, _)) => compare(x, yFst).orElse(Lower)
+        compare(xFst, yFst) // 60
+          .orElse(compare(xSnd, ySnd)) // 61
+      case (Product(xFst, _), y) =>
+        compare(xFst, y) // 70
+          .orElse(Greater) // 71
+      case (x, Product(yFst, _)) =>
+        compare(x, yFst) // 80
+          .orElse(Lower) // 81
+      case (Power(m, x), Power(n, y)) =>
+        compare(x, y) // 90
+          .orElse(order[Int].compare(m, n)) // 91
+      case (Power(_, x), y) => 
+        compare(x, y) // A0
+          .orElse(Greater) // A1
+      case (x, Power(_, y)) => compare(x, y).orElse(Lower)
       case (Mu(_, x), Mu(_, y)) => compare(x, y)
       case (Mu(_, _), _) => Greater
       case (_, Mu(_, _)) => Lower
@@ -77,8 +103,86 @@ object Expr:
       case (Zero, One) => Lower
       case (Zero, Zero) => Equal
 
-  extension [X, Y] (x: Expr[X])
+  extension [X] (x: Expr[X])
+    def show: String = x match
+      case Zero => "zero" // 0
+      case One => "one"
+      case Predef(v) => v.name
+      case Sum(left, right) => s"${left.show} + ${right.show}"
+      case Repeat(n, expr) => s"$n * ${expr.show}"
+      case Product(fst, snd) => s"${fst.show} * ${snd.show}"
+      case Power(n, x) => s"${x.show}^$n"
+      case Mu(mu, unmu) => s"mu(${mu.name} => ${unmu.show})"
 
+    def ^(pow: Int): Material[List[X], ?] = x match
+      case Zero => zero // 00
+      case One => // 10
+        Typed(One, Iso(_ => List.fill(pow)(()), _ => ()))
+      case Sum(_, _) => // 20
+        Iterator
+          .iterate(
+            Typed(x, Iso(x => List(x), xs => xs.head))
+              .asInstanceOf[Material[List[X], ?]]
+            ) { y =>
+              (Raw(x) * y).imap
+                { (x, y) => x :: y }
+                { xs => (xs.head, xs.tail) }
+            }
+          .drop(pow - 1).next
+      case Repeat(n, x) => // 30
+        val powers: LazyList[Int] = LazyList.iterate(n)(p => n * p)
+        (math.pow(n.toDouble, pow.toDouble).intValue * (x ^ pow)).imap
+          { (i, xs) => xs.zip(powers).map((x, k) => ((i / k) % n, x)) }
+          { xs =>
+            xs.foldRight((0, List.empty[x.R])) {
+              case ((i, x), (j, xs)) => (i + j * n, x :: xs)
+            }
+          }
+      case Product(fst, snd) => // 40
+        ((fst ^ pow) * (snd ^ pow)).imap{ (xs, ys) => xs.zip(ys) } { xs => xs.unzip }
+      case Power(n, x) => // 50
+        Typed(
+          Power(n * pow, x),
+          Iso(
+            xs => xs.grouped(n).toList,
+            xs => xs.flatten[x.R]
+          )
+        )
+      case _ => Raw(Power(pow, x))
+
+    def leader: Expr[?] = x match
+      case Sum(left, _) => left.leader
+      case Repeat(_, x) => x
+      case _ => x
+
+    def base: Expr[?] = x match
+      case Sum(_, _) | Repeat(_, _) => absurd
+      case Product(fst, _) => fst.base
+      case Power(_, x) => x
+      case _ => x
+    
+    def coeff: Int = x match
+      case Sum(_, _) => absurd
+      case Repeat(coeff, _) => coeff
+      case _ => 1
+
+    def power: Int = x match
+      case Product(_, _) | Sum(_, _) | Repeat(_, _) => absurd
+      case Power(power, _) => power
+      case _ => 1      
+
+    def map(mapping: Map[Variable, Variable])(using Context): Material[X, ?] = x match
+      case Zero => Raw(Zero)
+      case One => Raw(One)
+      case Predef(x) if mapping.contains(x) => Raw(Predef(mapping(x)))
+      case Predef(_) => Raw(x)
+      case Sum(left, right) => left.map(mapping) + right.map(mapping)
+      case Repeat(n, x) => n * x.map(mapping)
+      case Product(fst, snd) => fst.map(mapping) * snd.map(mapping)
+      case Mu(x, expr) if mapping.contains(x) => Raw(Predef(mapping(x)))
+      case Mu(x, expr) => Context.in(y => mu(y, expr.map(mapping + (x -> y))))
+
+  extension [X, Y] (x: Expr[X])
     def + (y: Expr[Y]): Material[Either[X, Y], ?] = (x, y) match
       case (Zero, y) => Typed(y, Iso(Right[X, Y], _.right.get)) // 00
       case (x, Zero) => Typed(x, Iso(Left[X, Y], _ .left.get)) // 10
@@ -189,42 +293,64 @@ object Expr:
           case Left((x, y)) => (x, Left(y))
           case Right((x, y)) => (x, Right(y))
         } ((x, y) => y.map((x, _)).left.map((x, _)))
-      case (Repeat(m, x), Repeat(n, y)) =>
+      case (Repeat(m, x), Repeat(n, y)) => // 60
         ((m * n) * (x * y)).imap
           { case (i, (x, y)) => ((i / n, x), (i % n, y)) }
           { case ((i, x), (j, y)) => (i * j, (x, y)) }
-      case (Repeat(n, x), _) =>
+      case (Repeat(n, x), _) => // 70
         (n * (x * y)).imap
           { case (i, (x, y)) => ((i, x), y) }
           { case ((i, x), y) => (i, (x, y)) }
-      case (_, Repeat(n, y)) =>
+      case (_, Repeat(n, y)) => // 80
         (n * (x * y)).imap
           { case (i, (x, y)) => (x, (i, y)) }
           { case (x, (i, y)) => (i, (x, y)) }
       case (Product(xFst, xSnd), Product(yFst, ySnd)) =>
-        if xFst > yFst then // 90
-          product(xFst, xSnd * y).imap
-            { case (x1, (x2, y)) => ((x1, x2), y) }
-            { case ((x1, x2), y) => (x1, (x2, y)) }
-        else // 91
-          product(yFst, x * ySnd).imap 
-            { case (y1, (x, y2)) => (x, (y1, y2)) }
-            { case (x, (y1, y2)) => (y1, (x, y2)) }
+        order.compare(xFst.base, yFst.base) match
+          case Equal => // 90
+            ((xFst * yFst) * (xSnd * ySnd)).imap
+              { case ((x1, y1), (x2, y2)) => ((x1, x2), (y1, y2)) }
+              { case ((x1, x2), (y1, y2)) => ((x1, y1), (x2, y2)) }
+          case Greater => // 91
+            product(xFst, xSnd * y).imap
+              { case (x1, (x2, y)) => ((x1, x2), y) }
+              { case ((x1, x2), y) => (x1, (x2, y)) }
+          case Lower => // 92
+            product(yFst, x * ySnd).imap 
+              { case (y1, (x, y2)) => (x, (y1, y2)) }
+              { case (x, (y1, y2)) => (y1, (x, y2)) }
       case (Product(fst, snd), y) =>
-        if  fst > y then // A0
-          product(fst, snd * y).imap
-            { case (x1, (x2, y)) => ((x1, x2), y) }
-            { case ((x1, x2), y) => (x1, (x2, y)) }
-        else Typed(Product(y, x), Iso(_.swap, _.swap)) // A1
+        order.compare(fst.base, y.base) match
+          case Equal => // A0
+            ((fst * y) * Raw(snd)).imap
+              { case ((x1, y), x2) => ((x1, x2), y) }
+              { case ((x1, x2), y) => ((x1, y), x2) }
+          case Greater => // A1
+            product(fst, snd * y).imap
+              { case (x1, (x2, y)) => ((x1, x2), y) }
+              { case ((x1, x2), y) => (x1, (x2, y)) }
+          case Lower => // A2
+            Typed(Product(y, x), Iso(_.swap, _.swap))
       case (x, Product(fst, snd)) =>
-        if x > fst then Raw(Product(x, y)) // B0
-        else //B1
-          product(fst, x * snd).imap
-            { case (y1, (x, y2)) => (x, (y1, y2)) }
-            { case (x, (y1, y2)) => (y1, (x, y2)) }
-      case (x, y) => 
-        if x >= y then Raw(Product(x, y))
-        else Typed(Product(y, x), Iso(_.swap, _.swap)) // C0
+        order.compare(x.base, fst.base) match
+          case Equal => // B0
+            ((x * fst) * Raw(snd)).imap
+              { case ((x, y1), y2) => (x, (y1, y2)) }
+              { case (x, (y1, y2)) => ((x, y1), y2) }
+          case Greater => Raw(Product(x, y)) // B1
+          case Lower => //B2
+            product(fst, x * snd).imap
+              { case (y1, (x, y2)) => (x, (y1, y2)) }
+              { case (x, (y1, y2)) => (y1, (x, y2)) }
+      case (x, y) =>
+        order.compare(x.base, y.base) match
+          case Equal => // C0
+            Power(x.power + y.power, x.base)
+              .split(x.coeff)
+              .asInstanceOf[Material[(X, Y), ?]]
+          case Greater => Raw(Product(x, y))
+          case Lower => // C1
+            Typed(Product(y, x), Iso(_.swap, _.swap)) 
     
     def subtract(y: Expr[Y]): Option[Expr[?]] = (x, y) match
       case (x, Zero) => Some(x) // 00
@@ -239,7 +365,7 @@ object Expr:
               case (_, Zero) => left // 13
               case _ => Sum(left, right) // 14
           case Greater =>
-            xRight.subtract(y).map { //15
+            xRight.subtract(y).map { // 15
               case Zero => xLeft // 16
               case diff => Sum(xLeft, diff) // 17
             }
@@ -321,7 +447,16 @@ object Expr:
                   leftUnderlying.withRaw[xLeft.R],
                   leftLeftAsProduct.snd
                 )
-              sumAsProduct(leftAsProduct, rightAsProduct)
+              rightAsProduct.snd match
+                case Zero =>
+                  AsProduct(leftAsProduct.underlying.withRaw[X], leftAsProduct.snd)
+                case _ =>
+                  val underlying: Material[(Y, Either[leftAsProduct.Snd, rightAsProduct.Snd]), ?] =
+                    (leftAsProduct.underlying + rightAsProduct.underlying).imap {
+                      case Left((y, x)) => (y, Left(x))
+                      case Right((y, x)) => (y, Right(x))
+                    } { (y, x) => x.map((y, _)).left.map((y, _)) }
+                  AsProduct(underlying.withRaw[X], Sum(leftAsProduct.snd, rightAsProduct.snd))
           }
         case (Sum(left, right), y) =>
           for
@@ -334,7 +469,7 @@ object Expr:
                   case Right((y, x)) => (y, Right(x))
                 } { (y, x) =>  x.map((y, _)).left.map((y, _)) }
             // cannot prove that (left + right).R =:= X
-            AsProduct(underlying.withRaw[X], Sum(leftProduct.snd, rightProduct.snd))  
+            AsProduct(underlying.withRaw[X], Sum(leftProduct.snd, rightProduct.snd))
         case (_, Sum(_, _)) => None // 40
         case (Repeat(m, x), Repeat(n, y)) =>
           if (m % n == 0)
@@ -361,31 +496,70 @@ object Expr:
             AsProduct(underlying.withRaw[X], Repeat(n, leader.snd))
         case (_, Repeat(_, _)) => None
         case (Product(xFst, xSnd), Product(yFst, ySnd)) =>
-          order.compare(xFst, yFst) match
+          order.compare(xFst.base, yFst.base) match
             case Equal => 
-              for sndProduct <- xSnd.asProduct(ySnd) // 80
-              yield // 81
-                val underlying = 
-                  product(yFst, sndProduct.underlying).imap 
-                    { case (fst, (snd, x)) => ((fst, snd), x) }
-                    { case ((fst, snd), x) => (fst, (snd, x)) }
-                // cannot prove that (fst * snd).R =:= X
-                AsProduct(underlying.withRaw[X], sndProduct.snd)
+              for
+                fst <- xFst.asProduct(yFst) // 80
+                snd <- xSnd.asProduct(ySnd) // 81
+              yield
+                (fst.snd, snd.snd) match
+                  case (One, _) => // 82
+                    val underlying = product(yFst, snd.underlying).imap
+                      { case (y1, (y2, x)) => ((y1, y2), x) }
+                      { case ((y1, y2), x) => (y1, (y2, x)) }
+                    AsProduct(underlying.withRaw[X], snd.snd)
+                  case (_, One) => // 83
+                    val underlying = (fst.underlying * Raw(ySnd)).imap
+                      { case ((y1, x), y2) => ((y1, y2), x) }
+                      { case ((y1, y2), x) => ((y1, x), y2) }
+                    AsProduct(underlying.withRaw[X], fst.snd)
+                  case _ => // 84
+                    val underlying = 
+                      (fst.underlying * snd.underlying).imap 
+                        { case ((y1, x1), (y2, x2)) => ((y1, y2), (x1, x2)) }
+                        { case ((y1, y2), (x1, x2)) => ((y1, x1), (y2, x2)) }
+                    // cannot prove that (fst * snd).R =:= X
+                    AsProduct(underlying.withRaw[X], Product(fst.snd, snd.snd))
             case Greater => 
-              for sndProduct <- xSnd.asProduct(y) // 82
-              yield productAsProduct(xFst, sndProduct) // 83
-            case Lower => None // 84
-
-        case (Product(`y`, snd), _) =>
-          Some(AsProduct(Raw(Product(y, snd)), snd)) // 90
-        case (Product(fst, snd), _) =>
-          for sndProduct <- snd.asProduct(y) // 91
-          yield productAsProduct(fst, sndProduct)
+              for sndProduct <- xSnd.asProduct(y) // 85
+              yield productAsProduct(xFst, sndProduct) // 86
+            case Lower => None // 87
+        case (Product(xFst, xSnd), _) =>
+          order.compare(xFst.base, y.base) match
+            case Equal =>
+              for
+                fst <- xFst.asProduct(y)
+              yield fst.snd match
+                case One => // 90
+                  AsProduct(Raw(Product(y, xSnd)).withRaw[X], xSnd)
+                case _ => // 91
+                  val underlying = (fst.underlying * Raw(xSnd)).imap
+                    { case ((y, x1), x2) => (y, (x1, x2)) }
+                    { case (y, (x1, x2)) => ((y, x1), x2) }
+                  AsProduct(underlying.withRaw[X], Product(fst.snd, xSnd))
+            case Greater =>
+              for sndProduct <- xSnd.asProduct(y) // 92
+              yield productAsProduct(xFst, sndProduct) // 93
+            case Lower => None // 94
         case (_, Product(_, _)) => None // A0
-        case (`y`, _) =>
-          val underlying = Raw(x).imap { (_, ()) } { _(0) } 
-          Some(AsProduct(underlying, One))
-        case _ => None
+        case (_, _) =>
+          order.compare(x.base, y.base) match
+            case Equal =>
+              (x.power - y.power) match
+                case 0 => // B0
+                  val underlying = Raw(y).imap { (_, ()) } { _(0) }
+                  Some(AsProduct(underlying.withRaw[X], One))
+                case 1 => // B1
+                  val snd = y.base
+                  Some(AsProduct((y * snd).withRaw[X], snd))
+                case pow if pow > 0 => // B2
+                  val snd = Power(pow, y.base)
+                  Some(AsProduct((y * snd).withRaw[X], snd))
+                case _ => None // B3
+            case _ => None
+
+          
+
 
   def repeat[X](coeff: Int, x: Expr[X]): Material[(Int, X), ?] = x match
     case Sum(left, right) =>
@@ -405,54 +579,20 @@ object Expr:
       )
     case _ => Raw(Repeat(coeff, x))
 
-
-    extension [X] (x: Expr[X])
-    def show: String = x match
-      case Zero => "zero" // 0
-      case One => "one"
-      case Predef(v) => v.name
-      case Sum(left, right) => s"${left.show} + ${right.show}"
-      case Repeat(n, expr) => s"$n * ${expr.show}"
-      case Product(fst, snd) => s"${fst.show} * ${snd.show}"
-      case Mu(mu, unmu) => s"mu(${mu.name} => ${unmu.show})"
-
-    def leader: Expr[?] = x match
-      case Sum(left, _) => left.leader
-      case Repeat(_, x) => x
-      case _ => x
-    
-    def coeff: Int = x match
-      case Sum(x, _) => x.coeff
-      case Repeat(coeff, _) => coeff
-      case _ => 1
-
-    def autoMap(v: Variable, f: Iso[?, ?]): Auto[X] = x match
-      case Zero => Auto.identity
-      case One => Auto.identity
-      case Predef(`v`) => f.asInstanceOf[Auto[X]]
-      case Predef(_) => Auto.identity
-      case Sum(left, right) => Iso.sum(left.autoMap(v, f), right.autoMap(v, f))
-      case Repeat(_, x) => Iso.product(Auto.identity[Int], x.autoMap(v, f))
-      case Product(fst, snd) => Iso.product(fst.autoMap(v, f), snd.autoMap(v, f))
-      case x@ Mu(_, expr) => x.fold(expr.autoMap(v, f))
-
-    def map(mapping: Map[Variable, Variable])(using Context): Material[X, ?] = x match
-      case Zero => Raw(Zero)
-      case One => Raw(One)
-      case Predef(x) if mapping.contains(x) => Raw(Predef(mapping(x)))
-      case Predef(_) => Raw(x)
-      case Sum(left, right) => left.map(mapping) + right.map(mapping)
-      case Repeat(n, x) => n * x.map(mapping)
-      case Product(fst, snd) => fst.map(mapping) * snd.map(mapping)
-      case Mu(x, expr) if mapping.contains(x) => Raw(Predef(mapping(x)))
-      case Mu(x, expr) => Context.in(y => mu(y, expr.map(mapping + (x -> y))))
-
   extension [X] (x: Mu[X])
     def fold(f: Auto[X]): Auto[X] =
       val Mu(mu, unmu) = x
-      lazy val iso: Auto[X] = f.andThen(Iso.lazily(fold))
-      lazy val fold: Auto[X] = unmu.autoMap(mu, iso)
-      iso
+      lazy val fold: Auto[X] = f.andThen(algebra(unmu))
+      def algebra[Y](y: Expr[Y]): Auto[Y] = y match
+        case Zero => Auto.identity
+        case One => Auto.identity
+        case Predef(`mu`) => Iso.lazily(fold.asInstanceOf[Auto[Y]])
+        case Predef(_) => Auto.identity
+        case Sum(left, right) => Iso.sum(algebra(left), algebra(right))
+        case Repeat(_, y) => Iso.product(Auto.identity[Int], algebra(y))
+        case Product(fst, snd) => Iso.product(algebra(fst), algebra(snd))
+        case x@ Mu(_, expr) => x.fold(algebra(expr))
+      fold
 
     def unmu(using Context): Material[X, ?] =
       val Mu(x0, unmu) = x
@@ -473,52 +613,48 @@ object Expr:
       unwrap(unmu, Map())
   
   extension [X] (x: Repeat[X])
-    private def split(n: Int): Material[Either[?, ?], ?] = 
+    private def split(n: Int): Material[? <: Either[Any, Any], (Int, X)] = 
       (n, x.coeff - n) match
         case (1, 1) =>
-          Typed[Either[X, X], (Int, X)](
-            x,
-            Iso(
-              (i, x) => if (i == 0) Left(x) else Right(x), 
-              {
-                case Left(x) => (0, x)
-                case Right(x) => (1, x)
-              }
-            )
-          ).asInstanceOf[Material[Either[?, ?], ?]]
+          Typed(x,
+            Iso((i, x) => if (i == 0) Left(x) else Right(x), {
+              case Left(x) => (0, x)
+              case Right(x) => (1, x)
+            })
+          )
         case (1, _) => 
-          Typed[Either[X, (Int, X)], (Int, X)](
-            x,
-            Iso(
-              (i, x) => if (i == 0) Left(x) else Right((i - 1, x)),
-              {
-                case Left(x) => (0, x)
-                case Right((i, x)) => (i + 1, x)
-              }
-            )
-          ).asInstanceOf[Material[Either[?, ?], ?]]
+          Typed(x,
+            Iso((i, x) => if (i == 0) Left(x) else Right((i - 1, x)), {
+              case Left(x) => (0, x)
+              case Right((i, x)) => (i + 1, x)
+            })
+          )
         case (_, 1) =>
-          Typed[Either[(Int, X), X], (Int, X)](
-            x,
-            Iso(
-              (i, x) => if (i < n) Left((i, x)) else Right(x),
-              {
-                case Left((i, x)) => (i, x)
-                case Right(x) => (n, x)
-              }
-            )
-          ).asInstanceOf[Material[Either[?, ?], ?]]
+          Typed(x,
+            Iso((i, x) => if (i < n) Left((i, x)) else Right(x), {
+              case Left((i, x)) => (i, x)
+              case Right(x) => (n, x)
+            })
+          )
         case (_, _) =>
-          Typed[Either[(Int, X), (Int, X)], (Int, X)](
-            x,
-            Iso(
-              (i, x) => if (i < n) Left((i, x)) else Right((i - n, x)),
-              {
-                case Left((i, x)) => (i, x)
-                case Right((i, x)) => (i + n, x)
-              }
-            )
-          ).asInstanceOf[Material[Either[?, ?], ?]]
+          Typed(x,
+            Iso((i, x) => if (i < n) Left((i, x)) else Right((i - n, x)), {
+              case Left((i, x)) => (i, x)
+              case Right((i, x)) => (i + n, x)
+            })
+          )
+
+  extension [X] (x: Power[X])
+    private def split(n: Int): Material[? <: (Any, Any), List[X]] = 
+      (n, x.power - n) match
+        case (1, 1) =>
+          Typed(x,Iso(x => (x.head, x.tail.head), (x, y) => List(x, y)))
+        case (1, _) =>
+          Typed(x, Iso(x => (x.head, x.tail), (x, y) => x::y))
+        case (_, 1) =>
+          Typed(x, Iso(x => (x.take(n), x.last), (x, y) => x :+ y))
+        case (_, _) =>
+          Typed(x, Iso(x => (x.take(n), x.drop(n)), (x, y) => x ::: y))
 
   private def sum[X, Y](x: Expr[X], y: Material[Y, ?]): Material[Either[X, Y], ?] = y match
     case Raw(y) => Raw(Sum(x, y))
@@ -542,15 +678,3 @@ object Expr:
           { case (fst, (y, snd)) => (y, (fst, snd)) }
           { case (y, (fst, snd)) => (fst, (y, snd)) }
         AsProduct(underlying.withRaw[X], Product(fst, snd))
-  
-  private def sumAsProduct[X, Y, Z1, Z2](left: AsProduct[Y, Z1, ?], right: AsProduct[Y, Z2, ?]): AsProduct[Y, ?, X] =
-    right.snd match
-      case Zero =>
-        AsProduct(left.underlying.withRaw[X], left.snd)
-      case _ =>
-        val underlying: Material[(Y, Either[Z1, Z2]), ?] =
-          (left.underlying + right.underlying).imap {
-            case Left((y, x)) => (y, Left(x))
-            case Right((y, x)) => (y, Right(x))
-          } { (y, x) => x.map((y, _)).left.map((y, _)) }
-        AsProduct(underlying.withRaw[X], Sum(left.snd, right.snd))

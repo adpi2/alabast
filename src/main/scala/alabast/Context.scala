@@ -14,11 +14,13 @@ object Context:
       .toMap
     Context(0, variables)
 
-  given Context = Context("int", "string")
+  given Context = Context("int", "long", "string")
 
   def in[T](f: Variable => Context ?=> T)(using ctx: Context): T = 
     val (x, next) = ctx.next
     f(x)(using next)
 
-  val int: Material[Int, Int] = predef[Int]("int")
-  val string: Material[String, String] = predef[String]("string")
+  val int: Material[Int, Int] = predef("int")
+  val long: Material[Long, Long] = predef("long")
+  val string: Material[String, String] = predef("string")
+  

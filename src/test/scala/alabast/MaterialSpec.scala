@@ -52,7 +52,6 @@ class MaterialSpec extends FunSuite:
   testEquals("mu[20]")(list(int).cons.unapply(List(1, 2)), Left((1, Left((2, Right(()))))))
   testEquals("mu[30]")(consList(int).show, "mu(x0 => int * x0 + one) * int")
   testEquals("mu[30]")(consList(list(int)).show, "mu(x0 => mu(x1 => int * x1 + one) * x0 + one) * mu(x0 => int * x0 + one)")
-  testEquals("mu[30]")((int * list(int)).expr, consList(int).expr)
 
   type C[X] = Either[Unit, List[X]]
   testEquals("mu[30]")(mu[C, Fix[C]](x => one + list(x))(Iso.fix).show, "mu(x0 => mu(x1 => x0 * x1 + one) + one)")
@@ -98,7 +97,8 @@ class MaterialSpec extends FunSuite:
   testEquals("unmu")(list(list(int)).unmu.show, "mu(x0 => mu(x1 => int * x1 + one) * x0 + one) * mu(x0 => int * x0 + one) + one")
   lazy val cons: Iso[?, List[List[Int]]] = list(list(int)).unmu.cons
   testEquals("unmu")(cons.apply(cons.unapply(List(List(1, 2), List(3, 4)))), List(List(1, 2), List(3, 4)))
-  
+
   type Z[X] = Either[(List[X], X), Unit]
-  val z = mu[Z, Fix[Z]](x => list(x) * x + one)(Iso.fix)
-  testEquals("unmu")(z.unmu.show, "mu(x0 => mu(x1 => x0 * x1 + one) * x0 + one) * mu(x0 => mu(x1 => x0 * x1 + one) * x0 + one) + one")
+  testEquals("unmu")(mu[Z, Fix[Z]](x => list(x) * x + one)(Iso.fix).unmu.show, "mu(x0 => mu(x1 => x0 * x1 + one) * x0 + one)^2 + one")
+
+  

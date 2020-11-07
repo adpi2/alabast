@@ -25,7 +25,7 @@ def zero[T]: Material[T, Nothing] = Typed(Zero, Iso.absurd)
 def one: Material[Unit, Unit] = Raw(One)
 def predef[T](name: String)(using ctx: Context): Material[T, T] = Raw(Predef[T](ctx.variables(name)))
 def mu[F[_], T](f: Material[Any, ?] => Context ?=> Material[F[Any], ?])(fix: Iso[F[T], T])(using ctx: Context): Material[T, ?] =
-  muImpl[F, T]([X] => (x: Material[X, ?]) => (ctx: Context) ?=> f(x.asInstanceOf[Material[Any, ?]]).asInstanceOf[Material[F[X], ?]])(fix)
+  muImpl[F, T]([X] => (x: Material[X, ?]) => (using ctx: Context) => f(x.asInstanceOf[Material[Any, ?]]).asInstanceOf[Material[F[X], ?]])(fix)
 
 def mu[T, R](v: Variable, mat: Material[T, R]): Material[T, R] = mat match
   case Raw(expr) => Raw(Mu(v, expr))
@@ -89,11 +89,17 @@ object Material:
       else Seq.empty
   
   extension [X, R] (x: Material[X, R])
+    def ^(pow: Int): Material[List[X], ?] = x match
+      case Raw(x) => x ^ pow
+      case Typed(x, cons) => (x ^ pow).imap
+        { case xs => xs.map(cons.apply) }
+        { case xs => xs.map(cons.unapply) }
+       
     def unmu(using Context): Material[X, ?] = x match
       case Raw(x @ Mu(_, _)) => x.unmu
       case Typed(x @ Mu(_, _), cons) => x.unmu.imap(cons) 
-      case _ => throw new Exception(s"cannot unmu material of expr ${x.show}")
-    
+      case _ => absurd
+
   extension [X, R] (n: Int)
     def * (x: Material[X, R]): Material[(Int, X), ?] = x match
       case Raw(x) => repeat(n, x)
