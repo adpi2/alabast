@@ -558,9 +558,6 @@ object Expr:
                 case _ => None // B3
             case _ => None
 
-          
-
-
   def repeat[X](coeff: Int, x: Expr[X]): Material[(Int, X), ?] = x match
     case Sum(left, right) =>
       (repeat(coeff, left) + repeat(coeff, right)).imap {
@@ -578,6 +575,53 @@ object Expr:
         )
       )
     case _ => Raw(Repeat(coeff, x))
+
+  def mu[F[_], X](f: [X] => Material[X, ?] => Context ?=> Material[F[X], ?])(fix: Iso[F[X], X])(using ctx: Context): Material[X, ?] =
+    val fZero = f(zero[X])
+    val fOne = f(one).expr
+    fZero.expr match
+      case Zero => zero // 00
+      case `fOne` => fZero.imap(fix) // 10
+      case One => // 20
+        Context.in { x => 
+          lazy val recurse: Material[X, ?] = Typed(Predef[unmu.Raw](x),Iso.lazily(unmu.cons))
+          lazy val unmu: Material[X, ?] = f(recurse).imap(fix)
+          Typed(Mu(x, unmu.expr), unmu.cons)
+        }
+      
+      case _ => // 30
+        Context.in { x =>
+          val fZeroIn = f(zero[X])
+          lazy val recurse: Material[X, ?] = Typed(Predef[unmu.Raw](x),Iso.lazily(unmu.cons))
+          lazy val unmu: Material[X, ?] = f(recurse).imap(fix)
+
+          unmu.expr.subtract(fZeroIn.expr).flatMap(_.asProduct(Predef(x))) match
+            case None => Typed(Mu(x, unmu.expr), unmu.cons)
+            case Some(_) =>
+              val mu = Raw(Predef[fRecAsProduct.Snd](x))
+              val fZeroMu = fZeroIn * mu
+              
+              lazy val fRec: Material[F[X], ?] = f(recurse)
+              lazy val fRecAsProduct: AsProduct[F[X], ?, fRec.Raw] =
+                fRec.asProduct(fZeroIn).get
+                  .asInstanceOf[AsProduct[F[X], ?, fRec.Raw]] // should not be needed :(
+              lazy val recurse: Material[X, ?] = Typed(
+                fZeroMu.expr,
+                fZeroMu.cons
+                  .andThen(Iso.lazily(fRecAsProduct.cons.invert))
+                  .andThen(Iso.lazily(fRec.cons))
+                  .andThen(fix)
+              )
+              val muExpr = Raw(Mu(x, fRecAsProduct.snd))
+              val result = fZero * muExpr
+              Typed(
+                result.expr,
+                result.cons
+                  .andThen(fRecAsProduct.cons.invert)
+                  .andThen(fRec.cons)
+                  .andThen(fix)
+              )
+          }
 
   extension [X] (x: Mu[X])
     def fold(f: Auto[X]): Auto[X] =
@@ -664,6 +708,10 @@ object Expr:
     case Raw(y) => Raw(Product(x, y))
     case Typed(expr, cons) =>  
       Typed(Product(x, expr), Iso((x, y) => (x, cons.apply(y)), (x, y) => (x, cons.unapply(y))))
+
+  private def mu[T, R](v: Variable, mat: Material[T, R]): Material[T, R] = mat match
+    case Raw(expr) => Raw(Mu(v, expr))
+    case Typed(expr, cons) => Typed(Mu(v, expr), cons)
 
   private def productAsProduct[X, Y, Z](fst: Expr[?], asProduct: AsProduct[Y, Z, ?]): AsProduct[Y, ?, X] =
     asProduct.snd match

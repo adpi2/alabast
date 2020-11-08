@@ -10,4 +10,3 @@ class PermutationSpec extends FunSuite:
   testEquals(permutations(4).size, 24)
   testEquals(permutations(5).size, 120)
   testEquals(permutations(6).size, 720)
-  
