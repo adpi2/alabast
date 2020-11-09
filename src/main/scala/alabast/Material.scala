@@ -83,6 +83,13 @@ object Material:
         val cons = y.withRaw[R].cons
         x.isos.map(f => f.invert.andThen(cons))
       else Seq.empty
+
+    def asTermOf(y: Material[Y, ?]): Seq[X => Y] = (x, y) match
+      case (Raw(x), Raw(y)) => x.asTermOf(y)
+      case (Raw(x), Typed(y, Iso(apply, _))) => x.asTermOf(y).map(f => f.andThen(apply))
+      case (Typed(x, Iso(_, unapply)), Raw(y)) => x.asTermOf(y).map(f => unapply.andThen(f))
+      case (Typed(x, Iso(_, unapply)), Typed(y, Iso(apply, _))) => x.asTermOf(y).map(f => unapply.andThen(f).andThen(apply))
+      
   
   extension [X, R] (x: Material[X, R])
     def ^(pow: Int): Material[List[X], ?] = x match

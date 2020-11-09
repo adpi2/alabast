@@ -234,3 +234,22 @@ class ExprSpec extends FunSuite:
 
   type Z[X] = Either[(List[X], X), Unit]
   testEquals("unmu")(mu[Z, Fix[Z]](x => list(x) * x + one)(Iso.fix).unmu.show, "mu(x0 => mu(x1 => x0 * x1 + one) * x0 + one)^2 + one")
+
+  testEquals("asTermOf[00]")(one.asTermOf(zero).size, 0)
+  testEquals("asTermOf[10]")((2 * int + string).asTermOf(int + string).size, 0)
+  testEquals("asTermOf[11]")((int + string).asTermOf(int + long).size, 0)
+  testEquals("asTermOf[12]")((int + string).asTermOf(int + long + string).size, 1)
+  testEquals("asTermOf[13]")((int + string).asTermOf(long + string).size, 0)
+  testEquals("asTermOf[14]")((long + string).asTermOf(int + long).size, 0)
+  testEquals("asTermOf[15]")((long + string).asTermOf(int + long + string).size, 1)
+  testEquals("asTermOf[20]")((int + string).asTermOf(int).size, 0)
+  testEquals("asTermOf[30]")((2 * int).asTermOf(int + string).size, 0)
+  testEquals("asTermOf[31]")(int.asTermOf(2 * int + string).size, 2)
+  testEquals("asTermOf[32]")(int.asTermOf(long + string).size, 0)
+  testEquals("asTermOf[33]")(long.asTermOf(int + string).size, 0)
+  testEquals("asTermOf[34]")(long.asTermOf(int + long).size, 1)
+  testEquals("asTermOf[40]")((2 * long).asTermOf(2 * long).size, 2)
+  testEquals("asTermOf[41]")(long.asTermOf(3 * long).size, 3)
+  testEquals("asTermOf[42]")((2 * long).asTermOf(3 * long).size, 6)
+  testEquals("asTermOf[43]")((3 * long).asTermOf(2 * long).size, 0)
+  testEquals("asTermOf[44]")(long.asTermOf(2 * int).size, 0)

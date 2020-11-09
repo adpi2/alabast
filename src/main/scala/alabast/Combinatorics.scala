@@ -2,6 +2,8 @@ package alabast
 
 def permutations(n: Int): LazyList[Auto[Int]] = LazyList.from(perms(n - 1))
 
+def variations(k: Int, n: Int): LazyList[Int => Int] = LazyList.from(vars(n - 1)(k - 1))
+
 extension [A] (seq: Seq[A]):
   def tuples(n: Int): LazyList[List[A]] =
     Iterator.iterate(LazyList(List.empty[A])) { acc =>
@@ -11,6 +13,20 @@ extension [A] (seq: Seq[A]):
       yield a :: list 
     }
     .drop(n).next // not really lazy
+
+private val vars: LazyList[LazyList[List[Int => Int]]] =
+  LazyList.from(1).map { n =>
+    LazyList.iterate(List.range(0, n).map(List(_))) {
+      perms => 
+        for
+          perm <- perms
+          i <- 0 until n
+          if !perm.contains(i)
+        yield i :: perm        
+    }.map { perms =>
+      perms.map(_.apply)
+    }
+  }
 
 private val perms: LazyList[Array[Auto[Int]]] =
   LazyList.iterate((1, Array(Auto[Int](_ => 0, _ => 0)))) { (n, autos) =>

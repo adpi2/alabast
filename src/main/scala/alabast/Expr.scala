@@ -350,10 +350,52 @@ object Expr:
               .asInstanceOf[Material[(X, Y), ?]]
           case Greater => Raw(Product(x, y))
           case Lower => // C1
-            Typed(Product(y, x), Iso(_.swap, _.swap)) 
+            Typed(Product(y, x), Iso(_.swap, _.swap))
+
+    def asTermOf(y: Expr[Y]): Seq[X => Y] = (x, y) match
+      case (_, Zero) => Seq.empty // 00
+      case (Sum(xLeft, xRight), Sum(yLeft, yRight)) =>
+        order.compare(xLeft.leader, yLeft.leader) match
+          case Equal =>
+            for
+              left <- xLeft.asTermOf(yLeft) // 10
+              right <- xRight.asTermOf(yRight) // 11
+            yield _.left.map(left).map(right) // 12
+          case Greater => Seq.empty // 13
+          case Lower => 
+            x.asTermOf(yRight).map(f => f.andThen(Right(_))) // 14, 15
+      case (Sum(left, right), y) => Seq.empty // 20
+      case (x, Sum(yLeft, yRight)) =>
+        order.compare(x.leader, yLeft.leader) match
+          case Equal =>
+            x.asTermOf(yLeft).map(f => f.andThen(Left(_))) // 30, 31
+          case Greater => Seq.empty // 32
+          case Lower =>
+            x.asTermOf(yRight).map(f => f.andThen(Right(_))) // 33, 34
+      case (x, y) =>
+        order.compare(x.leader, y.leader) match
+          case Equal =>
+            (x.coeff, y.coeff) match
+              case(k, n) if (k == n) => x.autos.map(_.apply.asInstanceOf[X => Y]) // 40
+              case (1, k) => // 41
+                for
+                  i <- 0 until k
+                  apply <- x.autos.map(_.apply)
+                yield apply.andThen((i, _)).asInstanceOf[X => Y]
+              case (k, n) if n > k => // 42
+                val leader = x.leader
+                val tuples = leader.autos.map(_.apply).tuples(k)
+                for
+                  variation <- variations(k, n) 
+                  tuple <- tuples
+                yield { (x: (Int, leader.R)) => x match
+                  case (i, r) => (variation(i), tuple(i)(r)) 
+                }.asInstanceOf[X => Y]
+              case _ => Seq.empty // 43
+          case _ => Seq.empty // 44
     
     def subtract(y: Expr[Y]): Option[Expr[?]] = (x, y) match
-      case (x, Zero) => Some(x) // 00
+      case (_, Zero) => Some(x) // 00
       case (Sum(xLeft, xRight), Sum(yLeft, yRight)) =>
         order.compare(xLeft.leader, yLeft.leader) match
           case Equal => 
