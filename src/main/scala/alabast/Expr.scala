@@ -91,10 +91,12 @@ object Expr:
       case (Power(_, x), y) => 
         compare(x, y) // A0
           .orElse(Greater) // A1
-      case (x, Power(_, y)) => compare(x, y).orElse(Lower)
-      case (Mu(_, x), Mu(_, y)) => compare(x, y)
-      case (Mu(_, _), _) => Greater
-      case (_, Mu(_, _)) => Lower
+      case (x, Power(_, y)) =>
+        compare(x, y) // B0
+          .orElse(Lower) // B1
+      case (Mu(_, x), Mu(_, y)) => compare(x, y) // C0
+      case (Mu(_, x), y) => compare(x, y) // C1
+      case (x, Mu(_, y)) => compare(x, y) // C2
       case (Predef(x), Predef(y)) => order[Int].compare(y.id, x.id)
       case (Predef(_), _) => Greater
       case (_, Predef(_)) => Lower

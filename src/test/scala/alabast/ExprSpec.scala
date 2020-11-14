@@ -5,6 +5,27 @@ import alabast.macros._
 import Context._
 
 class ExprSpec extends TestSuite:
+  def list[A](a: Context ?=> Material[A, ?])(using Context): Material[List[A], ?] =
+    mu[[X] =>> Either[Unit, (A, X)], List[A]](x => one + a * x)(
+      Iso({
+        case Left(()) => Nil
+        case Right((head, tail)) => head :: tail
+      }, {
+        case Nil => Left(())
+        case head :: tail => Right((head, tail))
+      })
+    )
+  def consList[A](a: Context ?=> Material[A, ?])(using Context): Material[::[A], ?] =
+    mu[[X] =>> Either[A, (A, X)], ::[A]](x => a + a * x)(
+      Iso({
+        case Left(a) => ::(a, Nil)
+        case Right((head, tail)) => ::(head, tail)
+      }, {
+        case a :: Nil => Left(a)
+        case head :: (tail @ ::(_, _)) => Right((head, tail))
+      })
+    )
+
   testEquals("Zero.autos")(zero.isos.size, 0)
   testEquals("One.autos")(one.isos.size, 1)
   testEquals("Predef.autos")(int.isos.size, 1)
@@ -34,12 +55,15 @@ class ExprSpec extends TestSuite:
   testAssert("compare[71]")(long * string > long)
   testAssert("compare[80]")(int > long * string)
   testAssert("compare[81]")(int < int * string)
-  testAssert("compare[90]")((int ^ 2) > (string ^ 3))
-  testAssert("compare[91]")((string ^ 2) < (string ^ 3))
-  testAssert("compare[A0]")((string ^ 2) < int)
-  testAssert("compare[A1]")((string ^2) > string)
-  testAssert("compare[B0]")(string < (int ^ 2))
-  testAssert("compare[B1]")(string < (string ^2))
+  testAssert("compare[90]")((int^2) > (string^3))
+  testAssert("compare[91]")((string^2) < (string^3))
+  testAssert("compare[A0]")((string^2) < int)
+  testAssert("compare[A1]")((string^2) > string)
+  testAssert("compare[B0]")(string < (int^2))
+  testAssert("compare[B1]")(string < (string^2))
+  testAssert("compare[C0]")(list(int) > list(string))
+  testAssert("compare[C1]")(list(int) > (int^2) + int + one)
+  testAssert("compare[C2]")(int > list(string))
 
   testEquals("+[00]")((zero + one).show, "one")
   testEquals("+[10]")((int + zero).show, "int")
@@ -144,31 +168,6 @@ class ExprSpec extends TestSuite:
   testEquals("asProduct[B1]")((int^3).asProduct(int^2).get.snd, int.expr)
   testEquals("asProduct[B2]")((int^3).asProduct(int).get.snd, (int^2).expr)
   testEquals("asProduct[B3]")((int^2).asProduct(int^3), None)
-
-
-  type LL[A] = [X] =>> Either[Unit, (A, X)]
-  def list[A](a: Context ?=> Material[A, ?])(using Context): Material[List[A], ?] =
-    mu[LL[A], List[A]](x => one + a * x)(
-      Iso({
-        case Left(()) => Nil
-        case Right((head, tail)) => head :: tail
-      }, {
-        case Nil => Left(())
-        case head :: tail => Right((head, tail))
-      })
-    )
-
-  type CC[A] = [X] =>> Either[A, (A, X)]
-  def consList[A](a: Context ?=> Material[A, ?])(using Context): Material[::[A], ?] =
-    mu[CC[A], ::[A]](x => a + a * x)(
-      Iso({
-        case Left(a) => ::(a, Nil)
-        case Right((head, tail)) => ::(head, tail)
-      }, {
-        case a :: Nil => Left(a)
-        case head :: (tail @ ::(_, _)) => Right((head, tail))
-      })
-    )
 
   testEquals("mu[00]")(mu(x => int * x)(Iso.fix[[X] =>> (Int, X)]).show, "zero")
   testEquals("mu[10]")(mu[[X] =>> Int, Int](_ => int)(Auto.identity).show, "int")
