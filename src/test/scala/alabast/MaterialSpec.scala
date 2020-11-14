@@ -4,7 +4,7 @@ import munit.FunSuite
 import alabast.macros._
 import Context._
 
-class MaterialSpec extends FunSuite:
+class MaterialSpec extends TestSuite:
   val x = int + string + int
   val y = string + int + int
   testEquals("as")(x.as(y).size, 2)

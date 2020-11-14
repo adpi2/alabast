@@ -418,7 +418,7 @@ object Expr:
             left.subtract(y).map { // 20
               case Zero => right // 21
               case left => Sum(left, right) // 22
-            } 
+            }
           case Greater => 
             right.subtract(y).map { // 23
               case Zero => left // 24
@@ -435,35 +435,6 @@ object Expr:
               case n if n > 1 => Some(Repeat(n, x.leader)) // 32
               case _ => None
           case _ => None // 33
-
-    // def factor(div: Expr[Y]): Option[Expr[?]] = (x, div) match
-    //   case (Zero, _) => Some(Zero) // 00
-    //   case (x, One) => Some(x) // 10
-    //   case (Sum(left, right), Sum(divLeft, divRight)) =>
-    //     for
-    //       leftQuotient <- left.factor(divLeft) // 20
-    //       rightFactor = (divRight * leftQuotient).expr
-    //       remainder <- right.subtract(rightFactor) // 21
-    //       rightQuotient <- remainder.factor(div) // 22
-    //     yield rightQuotient match
-    //       case Zero => leftQuotient //23
-    //       case rightQuotient => Sum(leftQuotient, rightQuotient) //24
-    //   case (Sum(left, right), div) =>
-    //     for
-    //       leftQuotient <- left.factor(div)
-    //       rightQuotient <- right.factor(div)
-    //     yield Sum(leftQuotient, rightQuotient)
-    //   case (_, Sum) => None
-    //   case (Product(fst, snd), Product(fstDiv, sndDiv)) =>
-    //     order.compare(fst, fstDiv) match
-    //       case Equal => snd.factor(sndDiv)
-    //       case Greater => snd.factor(div).map(factor => (fst * factor).expr)
-    //       case Lower => None
-    //   case (Product(fst, snd), div) =>
-    //     if fst == div then Some(snd)
-    //     else snd.factor(div).map(factor => (fst * factor).expr)
-    //   case (_, Product(_, _)) => None
-    //   case (x, div) => if x == div then Some(One) else None
 
     def asProduct(y: Expr[Y]): Option[AsProduct[Y, ?, X]] =
       (x, y) match

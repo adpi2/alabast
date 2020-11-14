@@ -4,7 +4,7 @@ import munit.FunSuite
 import alabast.macros._
 import Context._
 
-class PermutationSpec extends FunSuite:
+class PermutationSpec extends TestSuite:
   testEquals(permutations(1).size, 1)
   testEquals(permutations(2).size, 2)
   testEquals(permutations(3).size, 6)
