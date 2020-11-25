@@ -1,7 +1,7 @@
 package alabast
 
 import munit.FunSuite
-import alabast.macros._
+import alabast.macros.TestSuite
 import Context._
 
 class MaterialSpec extends TestSuite:
@@ -12,5 +12,3 @@ class MaterialSpec extends TestSuite:
   testEquals("as")(x.as(y)(0).unapply(Right(1)), Left(Left(1)))
   testEquals("as")(x.as(y)(1).apply(Left(Left(1))), Left(Right(1)))
   testEquals("as")(x.as(y)(1).unapply(Left(Right(1))), Left(Left(1)))
-
-  

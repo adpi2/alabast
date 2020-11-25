@@ -27,3 +27,10 @@ class PermutationSpec extends TestSuite:
   testEquals(variations(3, 6).size, 120)
   testEquals(variations(4, 6).size, 360)
   testEquals(variations(5, 6).size, 720)
+
+  testEquals(combinations(1, 1), LazyList(Seq(0)))
+  testEquals(combinations(1, 2), LazyList(Seq(0), Seq(1)))
+  testEquals(combinations(2, 2), LazyList(Seq(0, 1)))
+  testEquals(combinations(1, 3), LazyList(Seq(0), Seq(1), Seq(2)))
+  testEquals(combinations(2, 3), LazyList(Seq(0, 1), Seq(0, 2), Seq(1, 2)))
+  testEquals(combinations(3, 3), LazyList(Seq(0, 1, 2)))

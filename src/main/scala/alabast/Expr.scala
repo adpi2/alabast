@@ -4,6 +4,8 @@ import Comparison.{Greater, Lower, Equal}
 import compiletime.ops.int._
 import Auto._
 
+val version = "Yololo"
+
 sealed trait Expr[T]:
   type R = T
   val autos: LazyList[Auto[T]]
@@ -173,6 +175,8 @@ object Expr:
       case Power(power, _) => power
       case _ => 1      
 
+    // def toto: String = 1
+
     def map(mapping: Map[Variable, Variable])(using Context): Material[X, ?] = x match
       case Zero => Raw(Zero)
       case One => Raw(One)
@@ -183,6 +187,65 @@ object Expr:
       case Product(fst, snd) => fst.map(mapping) * snd.map(mapping)
       case Mu(x, expr) if mapping.contains(x) => Raw(Predef(mapping(x)))
       case Mu(x, expr) => Context.in(y => mu(y, expr.map(mapping + (x -> y))))
+
+    def terms: Seq[Expr[?]] = x match
+      case Sum(left, right) => left.terms ++ right.terms
+      case Repeat(n, x) => Seq.fill(n)(x)
+      case _ => x :: Nil
+
+    def primeFactors: List[Expr[?]] = 
+      def intersect(x: List[Expr[?]], y: List[Expr[?]]): List[Expr[?]] = (x, y) match
+        case (_, Nil) => Nil
+        case (Nil, _) => Nil
+        case (Repeat(m, _) :: Nil, Repeat(n, _) :: Nil) => 
+          if m < n && n % m == 0 then Repeat(n / m, One) :: Nil
+          else if m > n && m % n == 0 then Repeat(m / n, One) :: Nil
+          else Nil
+        case (x :: xs, y :: ys) =>
+          order[Expr[?]].compare(x.base, y.base) match
+            case Equal => (x.power, y.power) match
+              case (1, _) => x :: intersect(xs, ys)
+              case (_, 1) => y :: intersect(xs, ys)
+              case (m, n) => Power(math.min(m, n).toInt, x.base) :: intersect(xs, ys)
+            case _ => intersect(xs, ys)
+
+      def singletons(x: Expr[?]): List[Expr[?]] = 
+        x match
+          case Zero => Nil
+          case Sum(left, right) => intersect(singletons(left), singletons(right))
+          case Repeat(n, x) => singletons(x) :+ Repeat(n, One)
+          case Product(fst, snd) => fst :: singletons(snd)
+          case x => x :: Nil
+      
+      def sumFactors(x: Expr[?])(start: Int): List[Expr[?]] =
+        val terms = x.terms
+        val n = terms.size
+        val sqrt = math.sqrt(n).toInt
+        def subTerms(k: Int): LazyList[Expr[?]] =
+          combinations(k, n).map { comb => 
+            comb.map(terms).fold(Zero)((x, y) => (x + y).expr)
+          }
+        val result = for 
+          k <- LazyList.from(start to sqrt).filter(n % _ == 0)
+          subTerm <- subTerms(k)
+          subTermSingletons = singletons(subTerm)
+          factor =
+            if (subTermSingletons.isEmpty) subTerm
+            else subTerm.asProduct(
+              subTermSingletons.fold(One)((x, y) => (x * y).expr)
+            ).get.snd
+          if factor != One
+          asProduct <- x.asProduct(factor)
+        yield (factor :: sumFactors(asProduct.snd)(k))
+        result.headOption.getOrElse(List(x))
+
+      val singletonFactors = singletons(x)
+      val remaining =
+        if (singletonFactors.isEmpty) x
+        else x.asProduct(
+          singletonFactors.fold(One)((x, y) => (x * y).expr)
+        ).get.snd
+      (sumFactors(remaining)(2) ::: singletonFactors).sorted
 
   extension [X, Y] (x: Expr[X])
     def + (y: Expr[Y]): Material[Either[X, Y], ?] = (x, y) match
@@ -437,7 +500,7 @@ object Expr:
               case n if n > 1 => Some(Repeat(n, x.leader)) // 32
               case _ => None
           case _ => None // 33
-
+  
     def asProduct(y: Expr[Y]): Option[AsProduct[Y, ?, X]] =
       (x, y) match
         case (Zero, _) => Some(AsProduct(zero, Zero)) // 00

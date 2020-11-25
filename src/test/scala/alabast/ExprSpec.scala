@@ -1,7 +1,7 @@
 package alabast
 
 import munit.FunSuite
-import alabast.macros._
+import alabast.macros.TestSuite
 import Context._
 
 class ExprSpec extends TestSuite:
@@ -244,3 +244,16 @@ class ExprSpec extends TestSuite:
   testEquals("asTermOf[42]")((2 * long).asTermOf(3 * long).size, 6)
   testEquals("asTermOf[43]")((3 * long).asTermOf(2 * long).size, 0)
   testEquals("asTermOf[44]")(long.asTermOf(2 * int).size, 0)
+
+  testEquals("primeFactors")(((int^2) + int * long).expr.primeFactors, List(int, int + long).map(_.expr))
+  testEquals("primeFactors")(((int^2) + 2 * int * long + (long^2)).expr.primeFactors, List(int + long, int + long).map(_.expr))
+  testEquals("primeFactors")((6 * (int^2) + 5 * int + one).expr.primeFactors, List(2 * int + one, 3 * int + one).map(_.expr))
+  testEquals("primeFactors")(
+    ((int^2) + 2 * int * long + int * string + 2 * int + (long^2) + long * string + 2 * long + string + one).expr.primeFactors,
+    List(int + long + one, int + long + string + one).map(_.expr)
+  )
+  testEquals("primeFactors")(
+    (2 * int * long * string + 2 * int * long + 2 * int * string + 2 * int + 2 * long * string + 2 * long + 2 * string + 2 * one).expr.primeFactors,
+    List(2 * one, string + one, long + one, int + one).map(_.expr)
+  )
+

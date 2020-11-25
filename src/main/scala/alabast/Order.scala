@@ -22,6 +22,12 @@ trait Order[A]:
 
 def order[A](using o: Order[A]): Order[A] = o
 
+given [A: Order] as Ordering[A]:
+  def compare(x: A, y: A) = order.compare(x, y) match
+    case Equal => 0
+    case Lower => -1
+    case Greater => 1
+
 given Order[Int]:
   def compare(x: Int, y: Int): Comparison = x - y match
     case c if c > 0 => Greater

@@ -4,6 +4,8 @@ def permutations(n: Int): LazyList[Auto[Int]] = LazyList.from(perms(n - 1))
 
 def variations(k: Int, n: Int): LazyList[Int => Int] = LazyList.from(vars(n - 1)(k - 1))
 
+def combinations(k: Int, n: Int): LazyList[Seq[Int]] = combs(n - 1)(k - 1)
+
 extension [A] (seq: Seq[A]):
   def tuples(n: Int): LazyList[List[A]] =
     Iterator.iterate(LazyList(List.empty[A])) { acc =>
@@ -14,15 +16,24 @@ extension [A] (seq: Seq[A]):
     }
     .drop(n).next // not really lazy
 
+private val combs: LazyList[LazyList[LazyList[Seq[Int]]]] =
+  LazyList.from(1).map { n =>
+    LazyList.iterate(LazyList.from(0).map(Seq(_)).take(n)) { combs => 
+      for 
+        comb <- combs
+        i <- (comb.last + 1) until n
+      yield comb :+ i
+    }
+  }
+
 private val vars: LazyList[LazyList[List[Int => Int]]] =
   LazyList.from(1).map { n =>
-    LazyList.iterate(List.range(0, n).map(List(_))) {
-      perms => 
-        for
-          perm <- perms
-          i <- 0 until n
-          if !perm.contains(i)
-        yield i :: perm        
+    LazyList.iterate(List.range(0, n).map(List(_))) { perms => 
+      for
+        perm <- perms
+        i <- 0 until n
+        if !perm.contains(i)
+      yield i :: perm        
     }.map { perms =>
       perms.map(_.apply)
     }
