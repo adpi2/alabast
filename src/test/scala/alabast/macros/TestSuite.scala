@@ -1,6 +1,5 @@
-package alabast
+package alabast.macros
 
-import alabast.macros._
 import munit.FunSuite
 import scala.quoted._
 import munit.Assertions._
